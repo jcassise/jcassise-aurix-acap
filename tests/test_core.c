@@ -5,6 +5,11 @@
 #include "align.h"
 #include "image.h"
 #include "match.h"
+#include "yunet.h"
+
+#ifndef FIXTURES
+#define FIXTURES "fixtures"
+#endif
 
 static int failures = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -109,6 +114,55 @@ static void test_gallery_file_roundtrip(void)
     remove(path);
 }
 
+static void test_yunet_decode_matches_reference(void)
+{
+    yunet_meta meta;
+    CHECK(yunet_meta_load(FIXTURES "/yunet_astro.meta", &meta) == 0, "meta load failed");
+    CHECK(meta.in_w == 640 && meta.in_h == 352, "meta size %dx%d", meta.in_w, meta.in_h);
+
+    /* Outputs are concatenated in model-output order; size each from its role/stride. */
+    static const int ch[YUNET_ROLES] = { 1, 1, 4, 10 };
+    size_t size[YUNET_OUTPUTS] = { 0 };
+    for (int l = 0; l < YUNET_LEVELS; l++)
+        for (int r = 0; r < YUNET_ROLES; r++)
+            size[meta.t[l][r].index] = (size_t)(640 / (8 << l)) * (352 / (8 << l)) * ch[r];
+    size_t total = 0;
+    for (int i = 0; i < YUNET_OUTPUTS; i++) total += size[i];
+
+    FILE *f = fopen(FIXTURES "/yunet_astro_outputs.raw", "rb");
+    CHECK(f != NULL, "missing outputs fixture");
+    if (!f) return;
+    int8_t *blob = malloc(total);
+    CHECK(fread(blob, 1, total, f) == total, "short outputs fixture");
+    fclose(f);
+    const int8_t *outs[YUNET_OUTPUTS];
+    size_t off = 0;
+    for (int i = 0; i < YUNET_OUTPUTS; i++) { outs[i] = blob + off; off += size[i]; }
+
+    aurix_face faces[8];
+    int n = yunet_decode(&meta, outs, faces, 8, 0.6f, 0.3f);
+
+    FILE *e = fopen(FIXTURES "/yunet_astro_expected.txt", "r");
+    int want = -1;
+    CHECK(e && fscanf(e, "%d", &want) == 1, "expected fixture unreadable");
+    CHECK(n == want, "decoded %d faces, expected %d", n, want);
+    for (int i = 0; i < n && i < want; i++) {
+        float v[15];
+        for (int k = 0; k < 15; k++) if (fscanf(e, "%f", &v[k]) != 1) v[k] = NAN;
+        const aurix_face *d = &faces[i];
+        const float got[15] = { d->score, d->x0, d->y0, d->x1, d->y1,
+                                d->lm.x[0], d->lm.y[0], d->lm.x[1], d->lm.y[1], d->lm.x[2], d->lm.y[2],
+                                d->lm.x[3], d->lm.y[3], d->lm.x[4], d->lm.y[4] };
+        for (int k = 0; k < 15; k++)
+            CHECK(fabsf(got[k] - v[k]) < 0.01f, "face %d field %d: got %.3f want %.3f", i, k, got[k], v[k]);
+    }
+    if (e) fclose(e);
+
+    /* landmarks feed straight into alignment: image-left eye must be left of image-right eye */
+    if (n > 0) CHECK(faces[0].lm.x[0] < faces[0].lm.x[1], "eye order wrong");
+    free(blob);
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -116,6 +170,7 @@ int main(void)
     test_nv12_gray();
     test_dot_and_match();
     test_gallery_file_roundtrip();
+    test_yunet_decode_matches_reference();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

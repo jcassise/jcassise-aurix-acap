@@ -51,13 +51,14 @@ int main(void)
     else
         syslog(LOG_INFO, "gallery: %u identities, dim %u", gallery.count, gallery.dim);
 
-    aurix_model *det = model_load(cfg.detect_model, cfg.device);
+    aurix_detector *det = detector_open(cfg.detect_model, cfg.detect_meta, cfg.device);
     aurix_model *emb = model_load(cfg.embed_model, cfg.device);
     /* PAD/liveness hook: load cfg.pad_model here when door-access mode is added. */
-    aurix_capture *cap = (det && emb) ? capture_open(cfg.width, cfg.height, cfg.fps) : NULL;
+    if (!emb) syslog(LOG_WARNING, "no embedder - running detection benchmark only");
+    aurix_capture *cap = det ? capture_open(cfg.width, cfg.height, cfg.fps) : NULL;
 
-    if (!det || !emb || !cap) {
-        syslog(LOG_ERR, "pipeline not ready (models missing or VDO failed) - idling");
+    if (!det || !cap) {
+        syslog(LOG_ERR, "pipeline not ready (detector missing or VDO failed) - idling");
         idle_until_stopped();
         goto out;
     }
@@ -67,7 +68,7 @@ int main(void)
     aurix_image face = { face_px, AURIX_FACE_SIZE, AURIX_FACE_SIZE, AURIX_FACE_SIZE * 3, 3 };
     int8_t q[AURIX_MAX_DIM];
     stat_acc t_cap = {0}, t_det = {0}, t_align = {0}, t_emb = {0}, t_match = {0};
-    unsigned frames = 0, faces_seen = 0;
+    unsigned frames = 0, faces_detected = 0, faces_gated = 0, faces_embedded = 0;
     unsigned max_faces = cfg.max_faces < AURIX_MAX_FACES ? cfg.max_faces : AURIX_MAX_FACES;
 
     while (running) {
@@ -79,9 +80,12 @@ int main(void)
         double t2 = now_ms();
         acc(&t_cap, t1 - t0);
         acc(&t_det, t2 - t1);
+        if (n > 0) faces_detected += (unsigned)n;
 
         for (int i = 0; i < n; i++) {
             if (landmarks_eye_distance(&faces[i].lm) < (float)cfg.min_eye_px) continue;
+            faces_gated++;
+            if (!emb) continue;
             double a0 = now_ms();
             if (align_face(&frame, &faces[i].lm, &face)) continue;
             double a1 = now_ms();
@@ -89,7 +93,7 @@ int main(void)
             double a2 = now_ms();
             acc(&t_align, a1 - a0);
             acc(&t_emb, a2 - a1);
-            faces_seen++;
+            faces_embedded++;
             if (dim <= 0 || gallery.count == 0 || (uint32_t)dim != gallery.dim) continue;
 
             float score;
@@ -102,13 +106,13 @@ int main(void)
 
         if (++frames % cfg.stats_every == 0)
             syslog(LOG_INFO,
-                   "stats frames=%u faces=%u ms: capture %.1f detect %.1f align %.2f embed %.1f match %.2f",
-                   frames, faces_seen, avg(&t_cap), avg(&t_det), avg(&t_align), avg(&t_emb), avg(&t_match));
+                   "stats frames=%u faces det=%u gated=%u emb=%u | ms: capture %.1f detect %.1f align %.2f embed %.1f match %.2f",
+                   frames, faces_detected, faces_gated, faces_embedded, avg(&t_cap), avg(&t_det), avg(&t_align), avg(&t_emb), avg(&t_match));
     }
 
 out:
     capture_close(cap);
-    model_free(det);
+    detector_close(det);
     model_free(emb);
     gallery_free(&gallery);
     syslog(LOG_INFO, "stopped");

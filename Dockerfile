@@ -9,5 +9,5 @@ COPY ./app .
 # Bundle any models present in app/models; build still succeeds without them.
 RUN . /opt/axis/acapsdk/environment-setup* && \
     EXTRA="" && \
-    for f in models/*.tflite; do [ -f "$f" ] && EXTRA="$EXTRA -a $f"; done; \
+    for f in models/*.tflite models/*.meta; do [ -f "$f" ] && EXTRA="$EXTRA -a $f"; done; \
     acap-build ./ $EXTRA

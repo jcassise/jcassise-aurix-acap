@@ -1,12 +1,17 @@
 # Models (not committed)
 
-Place `detect.tflite` and `embed.tflite` here before building. They are bundled into the
-.eap only if present. `.tflite` files are git-ignored on purpose: the current research
-weights (WIDER FACE / WebFace-family training data) are **internal benchmarking only** and
-must never be pushed or shipped. Production weights will be retrained on commercially
-licensed or synthetic data with per-tensor INT8 QAT for the ARTPEC-8 DLPU.
+CI generates `detect.tflite` + `detect.meta` with `tools/convert_yunet.py` and bundles them
+into each `.eap`. For local builds, run the same script:
 
-Expected interfaces (current code):
-- `detect.tflite`: input NHWC uint8 RGB. Output decoding is a TODO in `src/detect.c`.
-- `embed.tflite`: input 1x112x112x3 uint8 RGB (normalisation folded in); output one
-  embedding tensor, float32 or int8/uint8 (set `embed_zero_point` in `src/config.c`).
+    pip install -r tools/requirements-models.txt
+    python3 tools/convert_yunet.py --out app/models [--calib-dir camera_frames/]
+
+Model files are git-ignored on purpose: current research weights (YuNet trained on
+WIDER FACE; embedder TBD) are **internal benchmarking only** and must not ship. Production
+weights will be retrained on commercially licensed or synthetic data with per-tensor QAT.
+
+- `detect.tflite`: YuNet-n, 1x352x640x3 uint8 RGB in, 12 int8 NHWC head maps out,
+  full INT8 per-tensor (no per-axis tensors). ~110 KB, ~74k params.
+- `detect.meta`: output order + scale/zero-point per output; read by `src/yunet.c`.
+- `embed.tflite` (not yet): 1x112x112x3 uint8 RGB in; one embedding out (float32 or
+  int8/uint8 - set `embed_zero_point` in `src/config.c`).

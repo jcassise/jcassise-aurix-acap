@@ -7,7 +7,30 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Converts YuNet to per-tensor INT8 TFLite at build time so weights never live in git.
+  # Research weights (WIDER FACE): INTERNAL BENCHMARK ONLY.
+  models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements-models.txt
+      - run: pip install -r tools/requirements-models.txt
+      - name: Convert YuNet
+        env:
+          TF_CPP_MIN_LOG_LEVEL: "3"
+        run: python3 tools/convert_yunet.py --out models-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: models
+          path: models-out/
+          retention-days: 7
+
   build:
+    needs: models
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -26,6 +49,11 @@ jobs:
     name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: models
+          path: app/models/
 
       - name: Build ACAP
         run: docker build --build-arg SDK_IMAGE=${{ matrix.sdk_image }} -t aurix-${{ matrix.arch }} .

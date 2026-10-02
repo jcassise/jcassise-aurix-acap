@@ -4,6 +4,7 @@
 void config_defaults(aurix_config *c)
 {
     c->detect_model = AURIX_APP_DIR "/models/detect.tflite";
+    c->detect_meta  = AURIX_APP_DIR "/models/detect.meta";
     c->embed_model  = AURIX_APP_DIR "/models/embed.tflite";
     c->pad_model    = NULL;
     c->gallery_path = AURIX_APP_DIR "/localdata/gallery.bin";

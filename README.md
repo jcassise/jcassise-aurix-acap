@@ -24,7 +24,8 @@ app/manifest.json      ACAP manifest (appName "aurix", respawn)
 app/Makefile           built inside the ACAP Native SDK container
 app/src/capture.*      VDO capture; RGB native, NV12→RGB fallback for ARTPEC-7
 app/src/infer.*        larod v3 wrapper (.tflite only, mmapped tensors, reusable job)
-app/src/detect.*       detector pre-processing + (TODO) output decoding
+app/src/detect.*       YuNet on larod: resize, run, scale back to frame coords
+app/src/yunet.*        YuNet output decode + NMS (pure C) driven by detect.meta
 app/src/align.*        5-pt similarity alignment to 112×112 ArcFace template
 app/src/embed.*        embedder; float32 or int8/uint8 outputs → int8 L2-normalised
 app/src/match.*        gallery.bin loader, NEON int8 dot product, cosine top-1
@@ -32,6 +33,7 @@ app/src/main.c         loop + per-stage latency stats every 100 frames
 app/models/            put detect.tflite / embed.tflite here (not committed)
 tests/                 host tests for align / image / match
 tools/make_gallery.py  enrolment embeddings (.npz) → gallery.bin
+tools/convert_yunet.py YuNet ONNX → per-tensor INT8 TFLite + detect.meta (run by CI)
 ```
 
 ## Build
@@ -53,18 +55,24 @@ The app idles rather than exits if models or VDO are unavailable.
 
 ## Status – what works and what doesn't yet
 
-Done and tested on host (x86, plus aarch64/armv7hf NEON under QEMU): alignment, resize,
-NV12→RGB, int8 matching, gallery file format. Syntax-checked only (needs real SDK + camera):
-`capture.c`, `infer.c`, `main.c`.
+**Detector (YuNet-n) is in.** CI converts it to full INT8 per-tensor TFLite (640×352 uint8
+RGB in, ~110 KB) and bundles it into both `.eap`s. Validated in conversion: INT8 finds the
+same faces as float (IoU > 0.5), landmark drift ~3% of inter-eye distance. The C decoder
+(`src/yunet.c`) matches the Python reference to < 0.01 px on x86, aarch64 and armv7hf.
 
-Before the first useful run on hardware:
+Tested on host (incl. NEON under QEMU): alignment, resize, NV12→RGB, YuNet decode, int8
+matching, gallery format. Syntax-checked only (needs real SDK + camera): `capture.c`,
+`infer.c`, `detect.c`, `main.c`.
 
-1. **Detector output decoding** (`src/detect.c`, `decode_outputs`) — stubbed, returns 0
-   faces. Depends on YuNet vs BlazeFace head. Until then, the build benchmarks capture and
-   detector latency only.
-2. **Verify SDK image tags** in `.github/workflows/build.yml` against the ACAP Native SDK
-   compatibility table (11.11 for armv7hf, 12.11 for aarch64).
-3. **Calibrate `match_threshold`** (placeholder 0.45) on real data.
+Without an embedder the app runs a **detection benchmark**: the log `stats` line shows
+faces detected / passing the 40 px eye gate and per-stage latency.
+
+Next:
+1. **Verify SDK image tags** in `.github/workflows/build.yml` (11.11 armv7hf, 12.11 aarch64).
+2. **Run on both cameras**, read latency, confirm models land in `models/` inside the package.
+3. **Recalibrate** the detector on real camera frames (`--calib-dir`); current calibration
+   is synthetic.
+4. **Embedder** conversion (benchmark only), then calibrate `match_threshold` (placeholder 0.45).
 
 ## AXIS OS 13 readiness checklist
 

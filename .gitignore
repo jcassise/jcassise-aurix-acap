@@ -15,3 +15,7 @@ tests/test_core
 
 # galleries contain biometric data - never commit
 *.bin
+
+# generated alongside detect.tflite by tools/convert_yunet.py
+app/models/*.meta
+__pycache__/

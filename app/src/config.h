@@ -9,6 +9,7 @@
 
 typedef struct {
     const char *detect_model;
+    const char *detect_meta;    /* output roles + quant params, from tools/convert_yunet.py */
     const char *embed_model;
     const char *pad_model;      /* NULL = liveness disabled (watchlist use case) */
     const char *gallery_path;
