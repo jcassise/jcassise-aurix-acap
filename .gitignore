@@ -1,0 +1,17 @@
+# build outputs
+*.o
+app/aurix
+*.eap
+app/*LICENSE.txt
+app/package.conf*
+app/param.conf
+build/
+tests/test_core
+
+# model weights - research weights are internal only, never commit
+*.tflite
+*.larod
+*.onnx
+
+# galleries contain biometric data - never commit
+*.bin

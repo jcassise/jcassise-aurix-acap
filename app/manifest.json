@@ -1,0 +1,13 @@
+{
+    "schemaVersion": "1.5.0",
+    "acapPackageConf": {
+        "setup": {
+            "appName": "aurix",
+            "friendlyName": "AURIX Face Match (benchmark)",
+            "vendor": "AURIX",
+            "embeddedSdkVersion": "3.0",
+            "runMode": "respawn",
+            "version": "0.1.0"
+        }
+    }
+}
