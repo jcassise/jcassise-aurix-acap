@@ -16,6 +16,42 @@ static int read_u32(FILE *f, uint32_t *v)
     return 0;
 }
 
+void gallery_init(aurix_gallery *g, uint32_t dim)
+{
+    memset(g, 0, sizeof(*g));
+    g->dim = dim;
+}
+
+int gallery_add(aurix_gallery *g, const char *id, aurix_category cat, const int8_t *emb)
+{
+    if (g->dim == 0) return -1;
+    if (g->count == g->cap) {
+        uint32_t cap = g->cap ? g->cap * 2 : 16;
+        void *ids = realloc(g->ids, (size_t)cap * AURIX_ID_LEN);
+        if (!ids) return -1;
+        g->ids = ids;
+        void *c = realloc(g->category, cap);
+        if (!c) return -1;
+        g->category = c;
+        void *e = realloc(g->emb, (size_t)cap * g->dim);
+        if (!e) return -1;
+        g->emb = e;
+        void *n = realloc(g->inv_norm, sizeof(float) * cap);
+        if (!n) return -1;
+        g->inv_norm = n;
+        g->cap = cap;
+    }
+    uint32_t i = g->count++;
+    memset(g->ids[i], 0, AURIX_ID_LEN);
+    strncpy(g->ids[i], id, AURIX_ID_LEN - 1);
+    g->category[i] = (uint8_t)cat;
+    memcpy(g->emb + (size_t)i * g->dim, emb, g->dim);
+    int32_t n2 = dot_s8(emb, emb, g->dim);
+    g->inv_norm[i] = n2 > 0 ? 1.0f / sqrtf((float)n2) : 0.0f;
+    return 0;
+}
+
+
 int gallery_load(const char *path, aurix_gallery *g)
 {
     memset(g, 0, sizeof(*g));
@@ -23,30 +59,28 @@ int gallery_load(const char *path, aurix_gallery *g)
     if (!f) return -1;
     char magic[4];
     uint32_t ver, dim, count;
-    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "AURG", 4) ||
-        read_u32(f, &ver) || ver != 1 || read_u32(f, &dim) || read_u32(f, &count) ||
-        dim == 0 || dim > 4096) {
+    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "AURG", 4) || read_u32(f, &ver) ||
+        (ver != 1 && ver != 2) || read_u32(f, &dim) || read_u32(f, &count) || dim == 0 || dim > 4096) {
         fclose(f);
         return -1;
     }
-    g->ids = calloc(count ? count : 1, AURIX_ID_LEN);
-    g->emb = malloc((size_t)(count ? count : 1) * dim);
-    g->inv_norm = malloc(sizeof(float) * (count ? count : 1));
-    if (!g->ids || !g->emb || !g->inv_norm) goto fail;
+    gallery_init(g, dim);
+    int8_t *e = malloc(dim);
+    char id[AURIX_ID_LEN];
+    if (!e) goto fail;
     for (uint32_t i = 0; i < count; i++) {
-        if (fread(g->ids[i], 1, AURIX_ID_LEN, f) != AURIX_ID_LEN ||
-            fread(g->emb + (size_t)i * dim, 1, dim, f) != dim)
-            goto fail;
-        g->ids[i][AURIX_ID_LEN - 1] = '\0';
-        const int8_t *e = g->emb + (size_t)i * dim;
-        int32_t n2 = dot_s8(e, e, dim);
-        g->inv_norm[i] = n2 > 0 ? 1.0f / sqrtf((float)n2) : 0.0f;
+        uint8_t cat = AURIX_CAT_ALLOW;
+        if (fread(id, 1, AURIX_ID_LEN, f) != AURIX_ID_LEN) goto fail;
+        if (ver == 2 && fread(&cat, 1, 1, f) != 1) goto fail;
+        if (fread(e, 1, dim, f) != dim) goto fail;
+        id[AURIX_ID_LEN - 1] = '\0';
+        if (gallery_add(g, id, cat == AURIX_CAT_THREAT ? AURIX_CAT_THREAT : AURIX_CAT_ALLOW, e)) goto fail;
     }
+    free(e);
     fclose(f);
-    g->dim = dim;
-    g->count = count;
     return 0;
 fail:
+    free(e);
     fclose(f);
     gallery_free(g);
     return -1;
@@ -55,9 +89,97 @@ fail:
 void gallery_free(aurix_gallery *g)
 {
     free(g->ids);
+    free(g->category);
     free(g->emb);
     free(g->inv_norm);
     memset(g, 0, sizeof(*g));
+}
+
+static int b64val(int c)
+{
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+' || c == '-') return 62;
+    if (c == '/' || c == '_') return 63;
+    return -1;
+}
+
+/* Decodes standard or URL-safe base64 (padding optional). Returns bytes written or -1. */
+static int b64decode(const char *s, size_t len, uint8_t *out, size_t cap)
+{
+    size_t n = 0;
+    uint32_t acc = 0;
+    int bits = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (s[i] == '=') break;
+        int v = b64val((unsigned char)s[i]);
+        if (v < 0) return -1;
+        acc = (acc << 6) | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (n == cap) return -1;
+            out[n++] = (uint8_t)(acc >> bits);
+        }
+    }
+    return (int)n;
+}
+
+static void trim(const char **a, const char **b)
+{
+    while (*a < *b && (**a == ' ' || **a == '\t' || **a == '\n' || **a == '\r')) (*a)++;
+    while (*b > *a && ((*b)[-1] == ' ' || (*b)[-1] == '\t' || (*b)[-1] == '\n' || (*b)[-1] == '\r')) (*b)--;
+}
+
+int gallery_parse_param(aurix_gallery *g, const char *s, const char *kind)
+{
+    if (!s) return 0;
+    uint32_t start = g->count;
+    int added = 0;
+    uint8_t buf[4096];
+    while (*s) {
+        const char *end = strchr(s, ';');
+        if (!end) end = s + strlen(s);
+        const char *a = s, *b = end;
+        trim(&a, &b);
+        if (a < b) {
+            const char *f[4];
+            size_t fl[4];
+            int nf = 0;
+            const char *p = a;
+            while (nf < 4) {
+                const char *c = (nf < 3) ? memchr(p, ',', (size_t)(b - p)) : NULL;
+                const char *fe = c ? c : b;
+                const char *x = p, *y = fe;
+                trim(&x, &y);
+                f[nf] = x;
+                fl[nf] = (size_t)(y - x);
+                nf++;
+                if (!c) break;
+                p = c + 1;
+            }
+            if (nf != 4 || fl[0] == 0 || fl[0] >= AURIX_ID_LEN) goto bad;
+            aurix_category cat;
+            if (fl[1] == 5 && !strncmp(f[1], "allow", 5)) cat = AURIX_CAT_ALLOW;
+            else if (fl[1] == 6 && !strncmp(f[1], "threat", 6)) cat = AURIX_CAT_THREAT;
+            else goto bad;
+            int n = b64decode(f[3], fl[3], buf, sizeof(buf));
+            if (n < 0) goto bad;
+            if (strlen(kind) == fl[2] && !strncmp(f[2], kind, fl[2]) && (uint32_t)n == g->dim) {
+                char id[AURIX_ID_LEN];
+                memcpy(id, f[0], fl[0]);
+                id[fl[0]] = '\0';
+                if (gallery_add(g, id, cat, (const int8_t *)buf)) goto bad;
+                added++;
+            }
+        }
+        s = *end ? end + 1 : end;
+    }
+    return added;
+bad:
+    g->count = start;   /* roll back this call's additions */
+    return -1;
 }
 
 void embedding_quantize(const float *in, uint32_t dim, int8_t *out)

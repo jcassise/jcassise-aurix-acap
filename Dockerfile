@@ -9,10 +9,16 @@ ARG ARCH=aarch64
 WORKDIR /opt/app
 COPY ./app .
 
-# Bundle any models present in app/models (paths are preserved: models/detect.tflite).
+# Bundle models (paths are preserved: models/detect.tflite). The embedder variant follows the
+# chip: per-channel INT8 for the ARTPEC-7 CPU, per-tensor INT8 (+CLE) for the ARTPEC-8 DLPU.
 RUN cp manifest.json.${ARCH} manifest.json && \
     . /opt/axis/acapsdk/environment-setup* && \
-    if [ "$ARCH" = armv7hf ]; then export AURIX_LEGACY_SDK=1; fi && \
+    if [ "$ARCH" = armv7hf ]; then export AURIX_LEGACY_SDK=1; KIND=cpu; else KIND=dlpu; fi && \
+    for ext in tflite meta; do \
+        [ -f models/embed_$KIND.$ext ] && cp models/embed_$KIND.$ext models/embed.$ext; \
+    done; \
     EXTRA="" && \
-    for f in models/*.tflite models/*.meta; do [ -f "$f" ] && EXTRA="$EXTRA -a $f"; done; \
-    acap-build ./ $EXTRA
+    for f in models/detect.tflite models/detect.meta models/embed.tflite models/embed.meta; do \
+        [ -f "$f" ] && EXTRA="$EXTRA -a $f"; \
+    done; \
+    echo "bundling:$EXTRA" && acap-build ./ $EXTRA

@@ -1,6 +1,6 @@
 # Built inside the ACAP Native SDK container (see ../Dockerfile).
 PROG       = aurix
-PKGS       = glib-2.0 gio-2.0 vdostream liblarod
+PKGS       = glib-2.0 gio-2.0 vdostream liblarod cairo axparameter
 PKG_CONFIG ?= pkg-config
 
 SRCS = $(wildcard src/*.c)
@@ -13,7 +13,7 @@ endif
 
 CFLAGS += -O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter
 CFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKGS))
-LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS)) -lm
+LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS)) -laxoverlay -lm -lpthread
 
 all: $(PROG)
 
@@ -21,6 +21,6 @@ $(PROG): $(OBJS)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 clean:
-	rm -f $(PROG) $(OBJS) *.eap *LICENSE.txt package.conf* param.conf
+	rm -f $(PROG) $(OBJS) *.eap *LICENSE.txt package.conf* param.conf manifest.json
 
 .PHONY: all clean

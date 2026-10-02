@@ -11,16 +11,18 @@ typedef struct {
     const char *detect_model;
     const char *detect_meta;    /* output roles + quant params, from tools/convert_yunet.py */
     const char *embed_model;
+    const char *embed_meta;
     const char *pad_model;      /* NULL = liveness disabled (watchlist use case) */
     const char *gallery_path;
     const char *device;         /* larod device name */
+    const char *embed_kind;     /* "dlpu" | "cpu": gallery entries must match */
     unsigned width, height;     /* capture resolution */
     double fps;
     unsigned max_faces;
+    unsigned max_embed_per_frame; /* embedder runs per frame (faces arrive best-score first) */
     unsigned min_eye_px;        /* skip faces below this inter-eye distance */
     float detect_threshold;
     float match_threshold;      /* cosine; PLACEHOLDER - calibrate on real data */
-    int embed_zero_point;       /* output zero point if embedder emits int8/uint8 */
     unsigned stats_every;       /* log latency stats every N frames */
 } aurix_config;
 

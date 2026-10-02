@@ -1,5 +1,13 @@
 {
     "schemaVersion": "1.7.0",
+    "resources": {
+        "dbus": {
+            "requiredMethods": [
+                "com.axis.Graphics2.*",
+                "com.axis.Overlay2.*"
+            ]
+        }
+    },
     "acapPackageConf": {
         "setup": {
             "appName": "aurix",
@@ -8,7 +16,26 @@
             "embeddedSdkVersion": "3.0",
             "vendorUrl": "https://cassise.com",
             "runMode": "respawn",
-            "version": "0.2.0"
+            "version": "0.3.0"
+        },
+        "configuration": {
+            "paramConfig": [
+                {
+                    "name": "Gallery",
+                    "default": "",
+                    "type": "string"
+                },
+                {
+                    "name": "MatchThreshold",
+                    "default": "45",
+                    "type": "int:maxlen=3;min=0;max=100"
+                },
+                {
+                    "name": "Overlay",
+                    "default": "yes",
+                    "type": "bool:no,yes"
+                }
+            ]
         }
     }
 }

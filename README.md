@@ -29,13 +29,18 @@ app/src/tensor.*       pitched-tensor repack (pure C)
 app/src/detect.*       YuNet on larod: resize, run, scale back to frame coords
 app/src/yunet.*        YuNet output decode + NMS (pure C) driven by detect.meta
 app/src/align.*        5-pt similarity alignment to 112×112 ArcFace template
-app/src/embed.*        embedder; float32 or int8/uint8 outputs → int8 L2-normalised
+app/src/embed.*        MobileFaceNet on larod → int8 L2-normalised 128-d embedding
+app/src/embed_meta.*   embedder sidecar (input size, output zero point)
 app/src/match.*        gallery.bin loader, NEON int8 dot product, cosine top-1
-app/src/main.c         loop + per-stage latency stats every 100 frames
+app/src/main.c         GLib main loop (overlay, settings) + pipeline worker thread, stats
+app/src/overlay.*      live-view boxes: green allow, red threat, blue unknown, grey too small
 app/models/            put detect.tflite / embed.tflite here (not committed)
 tests/                 host tests for align / image / match
 tools/make_gallery.py  enrolment embeddings (.npz) → gallery.bin
 tools/convert_yunet.py YuNet ONNX → per-tensor INT8 TFLite + detect.meta (run by CI)
+tools/convert_mobilefacenet.py  MobileFaceNet → embed_dlpu (per-tensor + CLE) and
+                       embed_cpu (per-channel) INT8 TFLite + meta (run by CI; no torch needed)
+tools/enroll.py        photos per person → gallery.bin, same pipeline + model as the camera
 ```
 
 ## Build
@@ -49,6 +54,17 @@ id=$(docker create aurix); docker cp $id:/opt/app ./build; docker rm $id
 make -C tests run
 ```
 
+## App settings (camera web UI → Apps → aurix → Settings, or VAPIX param.cgi)
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Gallery | empty | identities: `name,allow\|threat,dlpu\|cpu,base64` joined by `;` (from `tools/enroll.py --param`) |
+| MatchThreshold | 45 | cosine × 100 needed for a match |
+| Overlay | yes | draw boxes in live view |
+
+Changes apply immediately (no restart). `localdata/gallery.bin` is still read and merged if present.
+Use `dlpu` entries on ARTPEC-8 and `cpu` entries on ARTPEC-7; others are ignored.
+
 ## Install and watch
 
 Upload the `.eap` from the camera web UI (Apps) or AXIS Device Manager, then check
@@ -57,23 +73,24 @@ The app idles rather than exits if models or VDO are unavailable.
 
 ## Status – what works and what doesn't yet
 
-**Detector (YuNet-n) is in.** CI converts it to full INT8 per-tensor TFLite (640×352 uint8
-RGB in, ~110 KB) and bundles it into both `.eap`s. Validated in conversion: INT8 finds the
-same faces as float (IoU > 0.5), landmark drift ~3% of inter-eye distance. The C decoder
-(`src/yunet.c`) matches the Python reference to < 0.01 px on x86, aarch64 and armv7hf.
+Measured on hardware (2026-10-02), detection only:
 
-Tested on host (incl. NEON under QEMU): alignment, resize, NV12→RGB, YuNet decode, int8
-matching, gallery format. Compiled against the real SDK in CI
-but not yet run on a camera: `capture.c`, `infer.c`, `detect.c`, `main.c`.
+| Camera | Detect | Capture+convert | Rate |
+|---|---|---|---|
+| P3267 (ARTPEC-8 DLPU) | 55 ms | 46 ms | 10 fps (cap) |
+| P3248 (ARTPEC-7 CPU) | 419 ms | 94 ms | ~2 fps |
 
-Without an embedder the app runs a **detection benchmark**: the log `stats` line shows
-faces detected / passing the 40 px eye gate and per-stage latency.
+**Detector**: YuNet-n, per-tensor INT8 (640×352). **Embedder**: MobileFaceNet 128-d, rebuilt
+from PyTorch weights exactly (1e-6), INT8 cosine vs float ≈0.97 (DLPU, per-tensor + safe CLE)
+and ≈0.995 (CPU, per-channel). Offline check with the DLPU model: 7/7 unseen photos identified
+(lowest genuine 0.555, highest impostor 0.217, unknown bystander 0.204 → rejected at 0.45).
 
 Next:
-1. **Run on both cameras**, read latency, confirm models land in `models/` inside the package.
-2. **Recalibrate** the detector on real camera frames (`--calib-dir`); current calibration
-   is synthetic.
-3. **Embedder** conversion (benchmark only), then calibrate `match_threshold` (placeholder 0.45).
+1. **Larger galleries**: the Gallery setting suits a handful of people; thousands need file sync
+   from the management app.
+2. **Dual VDO stream**: hardware-scaled small stream for the detector, 1080p NV12 for crops;
+   removes most CPU pre-processing (~80 ms/frame on the P3267).
+3. Recalibrate on real camera frames; QAT on own licensed data for production.
 
 ## AXIS OS 13 readiness checklist
 

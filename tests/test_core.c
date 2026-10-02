@@ -7,6 +7,7 @@
 #include "match.h"
 #include "yunet.h"
 #include "tensor.h"
+#include "embed_meta.h"
 
 #ifndef FIXTURES
 #define FIXTURES "fixtures"
@@ -189,6 +190,70 @@ static void test_tensor_repack(void)
     CHECK(fd[0] == 1 && fd[3] == 4, "2-D repack wrong");
 }
 
+static void test_embed_meta(void)
+{
+    embed_meta m;
+    CHECK(embed_meta_load(FIXTURES "/embed_dlpu.meta", &m) == 0, "embed meta load failed");
+    CHECK(m.in_w == 112 && m.in_h == 112 && m.dim == 128, "embed meta %dx%d dim %d", m.in_w, m.in_h, m.dim);
+    CHECK(m.zero_point >= -128 && m.zero_point <= 127 && m.scale > 0, "embed meta quant %f %d", m.scale, m.zero_point);
+    CHECK(embed_meta_load(FIXTURES "/yunet_astro.meta", &m) != 0, "detector meta accepted as embedder meta");
+}
+
+static void b64(const uint8_t *in, size_t n, char *out)
+{
+    static const char *T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t o = 0;
+    for (size_t i = 0; i < n; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16 | (i + 1 < n ? (uint32_t)in[i + 1] << 8 : 0) | (i + 2 < n ? in[i + 2] : 0);
+        out[o++] = T[v >> 18 & 63]; out[o++] = T[v >> 12 & 63];
+        out[o++] = i + 1 < n ? T[v >> 6 & 63] : '='; out[o++] = i + 2 < n ? T[v & 63] : '=';
+    }
+    out[o] = 0;
+}
+
+static void test_gallery_param(void)
+{
+    enum { D = 128 };
+    int8_t e1[D], e2[D];
+    for (int i = 0; i < D; i++) { e1[i] = (int8_t)(i % 2 ? 90 : -40); e2[i] = (int8_t)(i < 64 ? 100 : -100); }
+    char b1[200], b2[200], s[1024];
+    b64((const uint8_t *)e1, D, b1);
+    b64((const uint8_t *)e2, D, b2);
+
+    aurix_gallery g;
+    gallery_init(&g, D);
+    snprintf(s, sizeof s, " John Cassise ,allow,dlpu,%s ; Bad Guy,threat,dlpu,%s;Other Cam,allow,cpu,%s;", b1, b2, b1);
+    int n = gallery_parse_param(&g, s, "dlpu");
+    CHECK(n == 2 && g.count == 2, "parsed %d (count %u), want 2 (cpu entry skipped)", n, g.count);
+    CHECK(!strcmp(g.ids[0], "John Cassise") && g.category[0] == AURIX_CAT_ALLOW, "entry 0 = '%s' cat %u", g.ids[0], g.category[0]);
+    CHECK(!strcmp(g.ids[1], "Bad Guy") && g.category[1] == AURIX_CAT_THREAT, "entry 1 = '%s' cat %u", g.ids[1], g.category[1]);
+    float score;
+    CHECK(gallery_best(&g, e2, &score) == 1 && score > 0.999f, "lookup threat entry failed (score %f)", score);
+
+    /* malformed: unknown category -> -1 and nothing from this call kept */
+    snprintf(s, sizeof s, "Ok Person,allow,dlpu,%s;Broken,maybe,dlpu,%s", b1, b1);
+    CHECK(gallery_parse_param(&g, s, "dlpu") == -1 && g.count == 2, "malformed string not rolled back (count %u)", g.count);
+    /* wrong embedding size is skipped, not an error */
+    CHECK(gallery_parse_param(&g, "Short,allow,dlpu,AAAA", "dlpu") == 0 && g.count == 2, "short embedding accepted");
+    CHECK(gallery_parse_param(&g, "", "dlpu") == 0 && gallery_parse_param(&g, NULL, "dlpu") == 0, "empty string not ok");
+    gallery_free(&g);
+}
+
+static void test_gallery_v2_file(void)
+{
+    const char *path = "/tmp/aurix_test_gallery_v2.bin";
+    FILE *f = fopen(path, "wb");
+    const uint32_t hdr[3] = { 2, 4, 1 };
+    fwrite("AURG", 1, 4, f); fwrite(hdr, 4, 3, f);
+    char id[AURIX_ID_LEN] = "watched"; uint8_t cat = 1; int8_t e[4] = { 0, 0, 127, 0 };
+    fwrite(id, 1, AURIX_ID_LEN, f); fwrite(&cat, 1, 1, f); fwrite(e, 1, 4, f);
+    fclose(f);
+    aurix_gallery g;
+    CHECK(gallery_load(path, &g) == 0 && g.count == 1 && g.category[0] == AURIX_CAT_THREAT, "v2 gallery load failed");
+    gallery_free(&g);
+    remove(path);
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -198,6 +263,9 @@ int main(void)
     test_gallery_file_roundtrip();
     test_yunet_decode_matches_reference();
     test_tensor_repack();
+    test_embed_meta();
+    test_gallery_param();
+    test_gallery_v2_file();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

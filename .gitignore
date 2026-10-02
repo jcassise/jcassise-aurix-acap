@@ -19,3 +19,4 @@ tests/test_core
 # generated alongside detect.tflite by tools/convert_yunet.py
 app/models/*.meta
 __pycache__/
+app/manifest.json

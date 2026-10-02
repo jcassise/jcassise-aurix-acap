@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Converts YuNet to per-tensor INT8 TFLite at build time so weights never live in git.
-  # Research weights (WIDER FACE): INTERNAL BENCHMARK ONLY.
+  # Converts the models at build time so weights never live in git.
+  # Research weights (YuNet: WIDER FACE, MobileFaceNet: MS-Celeb-1M): INTERNAL BENCHMARK ONLY.
   models:
     runs-on: ubuntu-latest
     steps:
@@ -19,10 +19,14 @@ jobs:
           cache: pip
           cache-dependency-path: tools/requirements-models.txt
       - run: pip install -r tools/requirements-models.txt
-      - name: Convert YuNet
+      - name: Convert YuNet (detector)
         env:
           TF_CPP_MIN_LOG_LEVEL: "3"
         run: python3 tools/convert_yunet.py --out models-out
+      - name: Convert MobileFaceNet (embedder, DLPU + CPU variants)
+        env:
+          TF_CPP_MIN_LOG_LEVEL: "3"
+        run: python3 tools/convert_mobilefacenet.py --out models-out
       - uses: actions/upload-artifact@v4
         with:
           name: models
