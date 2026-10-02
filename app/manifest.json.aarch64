@@ -1,0 +1,30 @@
+{
+    "schemaVersion": "2.2.0",
+    "resources": {
+        "linux": {
+            "user": {
+                "groups": ["video"]
+            }
+        },
+        "deepLearningProcessor": {
+            "enabled": true,
+            "required": true
+        }
+    },
+    "acapPackageConf": {
+        "setup": {
+            "appName": "aurix",
+            "friendlyName": "AURIX Face Match (benchmark)",
+            "vendor": "AURIX",
+            "vendorId": "1234567890",
+            "vendorUrl": "https://cassise.com",
+            "runMode": "respawn",
+            "version": "0.2.0",
+            "compatibleOsVersions": [
+                {
+                    "max": "13"
+                }
+            ]
+        }
+    }
+}

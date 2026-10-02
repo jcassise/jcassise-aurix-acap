@@ -10,7 +10,8 @@ static const int CHANNELS[YUNET_ROLES] = { 1, 1, 4, 10 };
 struct aurix_detector {
     aurix_model *model;
     yunet_meta meta;
-    const int8_t *outputs[YUNET_OUTPUTS];
+    size_t in_pitch;                       /* input row pitch in bytes */
+    const int8_t *outputs[YUNET_OUTPUTS];  /* refreshed after every run */
 };
 
 aurix_detector *detector_open(const char *model_path, const char *meta_path, const char *device)
@@ -25,7 +26,7 @@ aurix_detector *detector_open(const char *model_path, const char *meta_path, con
     if (!d->model) goto fail;
 
     int h, w, c;
-    if (model_input_dims(d->model, 0, &h, &w, &c) || w != d->meta.in_w || h != d->meta.in_h || c != 3 ||
+    if (model_input_dims(d->model, 0, &h, &w, &c, &d->in_pitch) || w != d->meta.in_w || h != d->meta.in_h || c != 3 ||
         model_input_type(d->model, 0) != AURIX_DT_UINT8) {
         syslog(LOG_ERR, "detector: model input does not match meta (%dx%d uint8 RGB expected)",
                d->meta.in_w, d->meta.in_h);
@@ -35,7 +36,7 @@ aurix_detector *detector_open(const char *model_path, const char *meta_path, con
         syslog(LOG_ERR, "detector: expected %d outputs, got %zu", YUNET_OUTPUTS, model_num_outputs(d->model));
         goto fail;
     }
-    /* Check every output is int8 and big enough for its grid, then cache pointers. */
+    /* Check every output is int8 with exactly the grid size the meta implies. */
     for (int l = 0; l < YUNET_LEVELS; l++) {
         int st = 8 << l;
         size_t cells = (size_t)(d->meta.in_w / st) * (d->meta.in_h / st);
@@ -44,11 +45,10 @@ aurix_detector *detector_open(const char *model_path, const char *meta_path, con
             size_t bytes = 0;
             const void *p = model_output(d->model, (size_t)idx, &bytes);
             if (!p || model_output_type(d->model, (size_t)idx) != AURIX_DT_INT8 ||
-                bytes < cells * CHANNELS[r]) {
-                syslog(LOG_ERR, "detector: output %d has wrong type/size", idx);
+                bytes != cells * CHANNELS[r]) {
+                syslog(LOG_ERR, "detector: output %d has wrong type/size (%zu bytes)", idx, bytes);
                 goto fail;
             }
-            d->outputs[idx] = p;
         }
     }
     syslog(LOG_INFO, "detector: YuNet %dx%d ready", d->meta.in_w, d->meta.in_h);
@@ -70,15 +70,17 @@ int detect_faces(aurix_detector *d, const aurix_image *frame, aurix_face *out, i
     const int w = d->meta.in_w, h = d->meta.in_h;
     size_t bytes = 0;
     uint8_t *in = model_input(d->model, 0, &bytes);
-    if (!in || bytes < (size_t)w * h * 3) return -1;
+    if (!in || bytes < d->in_pitch * (size_t)h) return -1;
 
     /* Full-frame stretch to the model size (1080p -> 640x352 is ~3x). With the 40 px
      * inter-eye gate at 1080p, gated faces are ~30 px in model space - well inside
      * YuNet's range. Tiling comes later for higher capture resolutions. */
-    aurix_image dst = { in, w, h, w * 3, 3 };
+    aurix_image dst = { in, w, h, (int)d->in_pitch, 3 };
     resize_bilinear(frame, &dst);
 
     if (model_run(d->model)) return -1;
+    for (size_t i = 0; i < YUNET_OUTPUTS; i++)
+        d->outputs[i] = model_output(d->model, i, NULL);
     int n = yunet_decode(&d->meta, d->outputs, out, max, threshold, NMS_IOU);
 
     const float sx = (float)frame->w / w, sy = (float)frame->h / h;

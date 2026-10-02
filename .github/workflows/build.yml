@@ -37,15 +37,15 @@ jobs:
       matrix:
         include:
           # AXIS P3248-LV, ARTPEC-7, AXIS OS 11.11 LTS (no 12.x for this model).
-          # VERIFY: pick the newest ACAP Native SDK tag whose minimum AXIS OS is <= 11.11.
+          # SDK 1.15 = last SDK for AXIS OS 11.x (matches Axis examples tag v1.15).
           - name: p3248-artpec7
             arch: armv7hf
             sdk_image: axisecp/acap-native-sdk:1.15-armv7hf-ubuntu22.04
           # AXIS P3267-LV, ARTPEC-8, AXIS OS 12.11 LTS.
-          # VERIFY: SDK tag matching AXIS OS 12.11.
+          # SDK 12.11.0 matches AXIS OS 12.11 (Axis examples tag 12.11.0).
           - name: p3267-artpec8
             arch: aarch64
-            sdk_image: axisecp/acap-native-sdk:12.0.0-aarch64-ubuntu24.04
+            sdk_image: axisecp/acap-native-sdk:12.11.0-aarch64-ubuntu24.04
     name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
           path: app/models/
 
       - name: Build ACAP
-        run: docker build --build-arg SDK_IMAGE=${{ matrix.sdk_image }} -t aurix-${{ matrix.arch }} .
+        run: docker build --build-arg SDK_IMAGE=${{ matrix.sdk_image }} --build-arg ARCH=${{ matrix.arch }} -t aurix-${{ matrix.arch }} .
 
       - name: Extract .eap
         run: |

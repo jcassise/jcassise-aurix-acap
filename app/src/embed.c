@@ -7,7 +7,8 @@
 int embed_face(aurix_model *m, const aurix_image *face, int8_t *q, uint32_t max_dim, int zero_point)
 {
     int h, w, c;
-    if (model_input_dims(m, 0, &h, &w, &c) || h != face->h || w != face->w || c != face->ch)
+    size_t pitch;
+    if (model_input_dims(m, 0, &h, &w, &c, &pitch) || h != face->h || w != face->w || c != face->ch)
         return -1;
     if (model_input_type(m, 0) != AURIX_DT_UINT8) {
         /* Normalisation (mean/std) is expected to be folded into the quantised model input. */
@@ -16,9 +17,9 @@ int embed_face(aurix_model *m, const aurix_image *face, int8_t *q, uint32_t max_
     }
     size_t in_bytes = 0;
     uint8_t *in = model_input(m, 0, &in_bytes);
-    if (!in || in_bytes < (size_t)w * h * c) return -1;
+    if (!in || in_bytes < pitch * (size_t)h) return -1;
     for (int j = 0; j < h; j++)
-        memcpy(in + (size_t)j * w * c, face->data + (size_t)j * face->stride, (size_t)w * c);
+        memcpy(in + (size_t)j * pitch, face->data + (size_t)j * face->stride, (size_t)w * c);
 
     if (model_run(m)) return -1;
 

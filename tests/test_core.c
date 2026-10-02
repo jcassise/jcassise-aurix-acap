@@ -6,6 +6,7 @@
 #include "image.h"
 #include "match.h"
 #include "yunet.h"
+#include "tensor.h"
 
 #ifndef FIXTURES
 #define FIXTURES "fixtures"
@@ -163,6 +164,31 @@ static void test_yunet_decode_matches_reference(void)
     free(blob);
 }
 
+static void test_tensor_repack(void)
+{
+    /* NHWC 1x3x5x2 int8 where each row is padded to 16 bytes and the image to 64. */
+    const size_t dims[4] = { 1, 3, 5, 2 }, pitches[4] = { 64, 64, 16, 2 };
+    uint8_t src[64], dst[30];
+    memset(src, 0xEE, sizeof src);
+    for (int y = 0; y < 3; y++)
+        for (int x = 0; x < 5; x++)
+            for (int c = 0; c < 2; c++) src[y * 16 + x * 2 + c] = (uint8_t)(y * 10 + x * 2 + c);
+    CHECK(tensor_is_padded(4, dims, pitches, 1) == 1, "padding not detected");
+    tensor_repack(dst, src, 4, dims, pitches, 1);
+    for (int i = 0; i < 30; i++) {
+        int y = i / 10, rem = i % 10;
+        CHECK(dst[i] == (uint8_t)(y * 10 + rem), "repack[%d]=%u", i, dst[i]);
+    }
+    const size_t packed[4] = { 30, 30, 10, 2 };
+    CHECK(tensor_is_padded(4, dims, packed, 1) == 0, "packed layout flagged as padded");
+    /* 2-D float embedding with padded innermost row: 1x4 floats in a 32-byte row */
+    const size_t d2[2] = { 1, 4 }, p2[2] = { 32, 32 };
+    float fs[8] = { 1, 2, 3, 4, -9, -9, -9, -9 }, fd[4];
+    CHECK(tensor_is_padded(2, d2, p2, 4) == 1, "2-D padding not detected");
+    tensor_repack(fd, fs, 2, d2, p2, 4);
+    CHECK(fd[0] == 1 && fd[3] == 4, "2-D repack wrong");
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -171,6 +197,7 @@ int main(void)
     test_dot_and_match();
     test_gallery_file_roundtrip();
     test_yunet_decode_matches_reference();
+    test_tensor_repack();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

@@ -20,10 +20,12 @@ commercially licensed or synthetic data with per-tensor INT8 QAT.
 ## Layout
 
 ```
-app/manifest.json      ACAP manifest (appName "aurix", respawn)
+app/manifest.json.*    per-arch manifests: armv7hf schema 1.7.0 (SDK 1.15),
+                       aarch64 schema 2.2.0 + video group + DLPU (SDK 12.11)
 app/Makefile           built inside the ACAP Native SDK container
 app/src/capture.*      VDO capture; RGB native, NV12→RGB fallback for ARTPEC-7
-app/src/infer.*        larod v3 wrapper (.tflite only, mmapped tensors, reusable job)
+app/src/infer.*        larod v3 wrapper: mmapped tensors, pitch-aware, DLPU power retries
+app/src/tensor.*       pitched-tensor repack (pure C)
 app/src/detect.*       YuNet on larod: resize, run, scale back to frame coords
 app/src/yunet.*        YuNet output decode + NMS (pure C) driven by detect.meta
 app/src/align.*        5-pt similarity alignment to 112×112 ArcFace template
@@ -42,7 +44,7 @@ CI (GitHub Actions) builds both `.eap` packages on every push to `main` and uplo
 as artifacts. It also runs the host tests. Locally (needs Docker Hub access):
 
 ```sh
-docker build --build-arg SDK_IMAGE=axisecp/acap-native-sdk:<tag> -t aurix .
+docker build --build-arg SDK_IMAGE=axisecp/acap-native-sdk:12.11.0-aarch64-ubuntu24.04 --build-arg ARCH=aarch64 -t aurix .
 id=$(docker create aurix); docker cp $id:/opt/app ./build; docker rm $id
 make -C tests run
 ```
@@ -61,27 +63,29 @@ same faces as float (IoU > 0.5), landmark drift ~3% of inter-eye distance. The C
 (`src/yunet.c`) matches the Python reference to < 0.01 px on x86, aarch64 and armv7hf.
 
 Tested on host (incl. NEON under QEMU): alignment, resize, NV12→RGB, YuNet decode, int8
-matching, gallery format. Syntax-checked only (needs real SDK + camera): `capture.c`,
-`infer.c`, `detect.c`, `main.c`.
+matching, gallery format. Compiled against the real SDK in CI
+but not yet run on a camera: `capture.c`, `infer.c`, `detect.c`, `main.c`.
 
 Without an embedder the app runs a **detection benchmark**: the log `stats` line shows
 faces detected / passing the 40 px eye gate and per-stage latency.
 
 Next:
-1. **Verify SDK image tags** in `.github/workflows/build.yml` (11.11 armv7hf, 12.11 aarch64).
-2. **Run on both cameras**, read latency, confirm models land in `models/` inside the package.
-3. **Recalibrate** the detector on real camera frames (`--calib-dir`); current calibration
+1. **Run on both cameras**, read latency, confirm models land in `models/` inside the package.
+2. **Recalibrate** the detector on real camera frames (`--calib-dir`); current calibration
    is synthetic.
-4. **Embedder** conversion (benchmark only), then calibrate `match_threshold` (placeholder 0.45).
+3. **Embedder** conversion (benchmark only), then calibrate `match_threshold` (placeholder 0.45).
 
 ## AXIS OS 13 readiness checklist
 
 Already compliant: larod v3 with `.tflite` only, no deprecated VDO frame fields (geometry
 from `vdo_stream_get_info`), no custom users/groups or dbus, no SD-card install.
 
+Done for the aarch64 build: manifest schema 2.2.0 with `compatibleOsVersions`
+(max 13), the `video` group and the `deepLearningProcessor` resource, following Axis'
+official examples (acap-native-sdk-examples 12.11.0).
+
 Still to do before moving P3267 to 13:
-- Manifest schema v2 with mandatory `compatibleOsVersions` (current `1.5.0` is chosen
-  for 11.11/12.11 compatibility; confirm exact v2 version string and field syntax).
+- Real `vendorId` (placeholder `1234567890`, as in Axis' examples) - required for signing.
 - Signing via ACAP Signing Service (non-TIP) or ACAP Service Portal (TIP).
 - Replace syslog matches with Axis events / Device Data Hub API (Message Broker is gone).
 

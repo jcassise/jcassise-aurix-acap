@@ -17,12 +17,20 @@ struct aurix_capture {
 
 static VdoStream *open_stream(unsigned w, unsigned h, double fps, gboolean rgb, GError **err)
 {
+    /* Settings follow Axis' vdo-larod example (acap-native-sdk-examples 12.11.0). */
     VdoMap *s = vdo_map_new();
+    vdo_map_set_uint32(s, "channel", 1);
     vdo_map_set_uint32(s, "format", rgb ? VDO_FORMAT_RGB : VDO_FORMAT_YUV);
     if (!rgb) vdo_map_set_string(s, "subformat", "NV12");
-    vdo_map_set_uint32(s, "width", w);
+#ifdef AURIX_LEGACY_SDK
+    vdo_map_set_uint32(s, "width", w);      /* SDK 1.15 style (examples v1.15) */
     vdo_map_set_uint32(s, "height", h);
+#else
+    VdoPair32u res = { .w = w, .h = h };    /* SDK 12.x style; width/height are deprecated */
+    vdo_map_set_pair32u(s, "resolution", res);
+#endif
     vdo_map_set_double(s, "framerate", fps);
+    vdo_map_set_uint32(s, "buffer.count", 2);
     VdoStream *st = vdo_stream_new(s, NULL, err);
     g_object_unref(s);
     return st;
