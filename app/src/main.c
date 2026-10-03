@@ -22,6 +22,9 @@
 #include "metrics.h"
 #include "web.h"
 #include "commission.h"
+#include "enroll.h"
+#include "capacity.h"
+#include "person_store.h"
 
 #define APP_NAME "aurix"
 #define MATCH_LOG_INTERVAL_S 5.0
@@ -35,7 +38,12 @@ typedef struct {
     AXParameter *params;
     volatile gint running;
 
+    GMutex model_lock;           /* detector + embedder: live video and enrolment take turns */
+    char model_version[64];
+    double match_ns;             /* matching benchmark, for the capacity estimate */
     GMutex gal_lock;             /* protects everything below */
+    aurix_gallery pharos_part;   /* templates of people synced from Pharos */
+    char *gallery_param;         /* last Gallery setting value */
     aurix_gallery gallery;
     double *last_logged;         /* per gallery entry, for MATCH log rate limiting */
     double last_nomatch_log;
@@ -64,9 +72,14 @@ static void acc(stat_acc *s, double v) { s->total += v; s->n++; }
 static double avg(const stat_acc *s) { return s->n ? s->total / s->n : 0.0; }
 
 /* Builds the gallery from localdata/gallery.bin (if present) plus the Gallery setting, then swaps it in. */
-static void rebuild_gallery(app_ctx *a, const char *param_value)
+static void rebuild_gallery(app_ctx *a, const char *param_in)
 {
     if (!a->emb) return;
+    char *param_value;
+    g_mutex_lock(&a->gal_lock);
+    if (param_in) { g_free(a->gallery_param); a->gallery_param = g_strdup(param_in); }
+    param_value = g_strdup(a->gallery_param);
+    g_mutex_unlock(&a->gal_lock);
     const uint32_t dim = (uint32_t)embedder_dim(a->emb);
     aurix_gallery g;
     if (gallery_load(a->file_gallery_path, &g) == 0 && g.dim != dim) {
@@ -89,6 +102,15 @@ static void rebuild_gallery(app_ctx *a, const char *param_value)
                    sk, sk == 1 ? "y" : "ies", a->cfg.embed_kind);
     if (ss) syslog(LOG_WARNING, "Gallery: %d entr%s with wrong embedding size skipped (truncated?)",
                    ss, ss == 1 ? "y" : "ies");
+    g_free(param_value);
+    /* people synced from Pharos */
+    uint32_t from_pharos = 0;
+    g_mutex_lock(&a->gal_lock);
+    for (uint32_t i = 0; i < a->pharos_part.count && a->pharos_part.dim == dim; i++)
+        from_pharos += gallery_add_ref(&g, a->pharos_part.ids[i], a->pharos_part.refs[i],
+                                       (aurix_category)a->pharos_part.category[i],
+                                       a->pharos_part.emb + (size_t)i * dim) == 0;
+    g_mutex_unlock(&a->gal_lock);
     double *ll = calloc(g.count ? g.count : 1, sizeof(double));
 
     g_mutex_lock(&a->gal_lock);
@@ -98,17 +120,19 @@ static void rebuild_gallery(app_ctx *a, const char *param_value)
     a->last_logged = ll;
     g_mutex_unlock(&a->gal_lock);
 
-    syslog(LOG_INFO, "gallery: %u identities (%u from file, %d from settings, kind %s)",
-           g.count, from_file, from_param, a->cfg.embed_kind);
+    syslog(LOG_INFO, "gallery: %u templates (%u from file, %d from settings, %u from Pharos, kind %s)",
+           g.count, from_file, from_param, from_pharos, a->cfg.embed_kind);
     {
         int threats = 0;
-        for (uint32_t i = 0; i < g.count; i++) threats += g.category[i] == AURIX_CAT_THREAT;
-        metrics_gallery((int)g.count, (int)g.count - threats, threats,
-                        from_file && from_param ? "Settings and gallery file" : from_file ? "Gallery file"
-                        : from_param ? "Settings" : "Nobody enrolled", gallery_bytes(&g));
+        for (uint32_t i = 0; i < g.count; i++) threats += g.category[i] != AURIX_CAT_ALLOW;
+        char src[96];
+        snprintf(src, sizeof src, "%s%s%s%s%s", from_pharos ? "Pharos" : "",
+                 from_pharos && (from_param || from_file) ? " + " : "", from_param ? "Settings" : "",
+                 from_param && from_file ? " + " : "", from_file ? "Gallery file" : "");
+        metrics_gallery((int)g.count, (int)g.count - threats, threats, src[0] ? src : "Nobody enrolled", gallery_bytes(&g));
     }
-    for (uint32_t i = 0; i < g.count; i++)
-        syslog(LOG_INFO, "  %s [%s]", g.ids[i], g.category[i] == AURIX_CAT_THREAT ? "threat" : "allow");
+    for (uint32_t i = 0; i < g.count && i < 20; i++)
+        if (!g.refs[i][0]) syslog(LOG_INFO, "  %s [%s]", g.ids[i], g.category[i] == AURIX_CAT_THREAT ? "threat" : "allow");
 }
 
 static void schedule_pharos_restart(app_ctx *a);
@@ -222,6 +246,38 @@ static const char *pharos_command_cb(const char *type, const json_t *args, char 
     return "unsupported";
 }
 
+static int pharos_enroll_cb(const unsigned char *jpeg, size_t len, int8_t emb[PS_DIM], char *why, size_t n, void *user)
+{
+    app_ctx *a = user;
+    g_mutex_lock(&a->model_lock);                 /* waits for the current video frame to finish */
+    int rc = enroll_photo(a->det, a->emb, jpeg, len, emb, PS_DIM, why, n);
+    g_mutex_unlock(&a->model_lock);
+    return rc;
+}
+
+static void pharos_people_cb(const ps_store *st, void *user)
+{
+    app_ctx *a = user;
+    aurix_gallery pg;
+    gallery_init(&pg, PS_DIM);
+    int ready = 0, failed = 0, pending = 0;
+    ps_counts(st, a->model_version, &ready, &failed, &pending);
+    for (int i = 0; i < st->n; i++) {
+        const ps_person *p = &st->v[i];
+        aurix_category cat = p->watchlist == PS_WL_THREAT ? AURIX_CAT_THREAT
+                           : p->watchlist == PS_WL_CONCERN ? AURIX_CAT_CONCERN : AURIX_CAT_ALLOW;
+        for (int k = 0; k < p->nphotos; k++)
+            if (p->photos[k].state == TPL_READY && !strcmp(p->photos[k].model, a->model_version))
+                gallery_add_ref(&pg, p->display_name, p->person_id, cat, p->photos[k].emb);
+    }
+    g_mutex_lock(&a->gal_lock);
+    gallery_free(&a->pharos_part);
+    a->pharos_part = pg;
+    g_mutex_unlock(&a->gal_lock);
+    metrics_sync(st->revision, st->last_ok_ms, st->n, ready, failed, pending);
+    rebuild_gallery(a, NULL);
+}
+
 static void read_param(AXParameter *p, const char *name, char *out, size_t n)
 {
     char *v = param_get(p, name);
@@ -254,14 +310,22 @@ static gpointer pharos_restart_thread(gpointer data)
     explicit_bzero(&cm, sizeof cm);
     snprintf(s.state_dir, sizeof s.state_dir, "%s/localdata/pharos", AURIX_APP_DIR);
     snprintf(s.sw_version, sizeof s.sw_version, "%s", AURIX_VERSION);
-    snprintf(s.model_version, sizeof s.model_version, "mobilefacenet-128-int8-%s", a->cfg.embed_kind);
+    snprintf(s.model_version, sizeof s.model_version, "%s", a->model_version);
     read_param(a->params, "Brand.ProdNbr", s.hw_model, sizeof s.hw_model);
     read_param(a->params, "Properties.System.SerialNumber", s.serial, sizeof s.serial);
     read_param(a->params, "Properties.Firmware.Version", s.firmware, sizeof s.firmware);
     if (!s.hw_model[0]) snprintf(s.hw_model, sizeof s.hw_model, "unknown");
     if (!s.serial[0]) snprintf(s.serial, sizeof s.serial, "unknown");
     s.default_threshold = a->cfg.match_threshold;
-    pharos_hooks h = { pharos_apply, pharos_snapshot_cb, pharos_state_cb, pharos_command_cb, a };
+    {   /* capacity estimate reported to Pharos in /hello */
+        sys_reading sr;
+        cpu_counters cc = { 0, 0 };
+        sysinfo_read(&sr, &cc, AURIX_APP_DIR "/localdata");
+        cap_result cr = capacity_estimate(sr.mem_available_kb, sr.storage_free_kb, a->match_ns);
+        s.max_people = cr.estimate > 1000000 ? 1000000 : (int)cr.estimate;
+    }
+    pharos_hooks h = { pharos_apply, pharos_snapshot_cb, pharos_state_cb, pharos_command_cb,
+                       pharos_enroll_cb, pharos_people_cb, a };
     if (s.url[0] && s.device_id[0] && s.token[0]) {
         a->pharos = pharos_start(&s, &h);
     } else {
@@ -328,6 +392,7 @@ static gpointer worker(gpointer data)
         double t0 = now_s();
         if (capture_next(a->cap, &frame)) continue;
         double t1 = now_s();
+        g_mutex_lock(&a->model_lock);             /* shared with on-camera enrolment */
         int n = detect_faces(a->det, &frame, faces, (int)max_faces, cfg->detect_threshold);
         double t2 = now_s();
         acc(&t_cap, (t1 - t0) * 1e3);
@@ -387,11 +452,12 @@ static gpointer worker(gpointer data)
             metrics_stage_time(ST_MATCH, (now_s() - a2) * 1e3);
             int hit = idx >= 0 && score >= a->threshold;
             int threat = hit && a->gallery.category[idx] == AURIX_CAT_THREAT;
+            int concern = hit && a->gallery.category[idx] == AURIX_CAT_CONCERN;
             if (a->gallery.count) metrics_match(hit ? a->gallery.ids[idx] : NULL, threat, score, hit);
             if (bx) {
-                bx->state = hit ? (threat ? OV_THREAT : OV_ALLOW) : OV_UNKNOWN;
+                bx->state = hit ? (threat ? OV_THREAT : concern ? OV_CONCERN : OV_ALLOW) : OV_UNKNOWN;
                 if (hit)
-                    snprintf(bx->label, sizeof(bx->label), "%s%s %.2f", threat ? "THREAT: " : "",
+                    snprintf(bx->label, sizeof(bx->label), "%s%s %.2f", threat ? "THREAT: " : concern ? "CONCERN: " : "",
                              a->gallery.ids[idx], score);
                 else if (idx >= 0)
                     snprintf(bx->label, sizeof(bx->label), "unknown (%.2f)", score);
@@ -409,13 +475,15 @@ static gpointer worker(gpointer data)
                 if (t - a->last_logged[idx] >= MATCH_LOG_INTERVAL_S) {
                     a->last_logged[idx] = t;
                     /* TODO: Axis event (and Device Data Hub on AXIS OS 13) instead of syslog. */
-                    syslog(threat ? LOG_WARNING : LOG_INFO, "%s id=%s score=%.3f",
-                           threat ? "THREAT" : "MATCH", a->gallery.ids[idx], score);
+                    syslog(threat || concern ? LOG_WARNING : LOG_INFO, "%s id=%s%s%s score=%.3f",
+                           threat ? "THREAT" : concern ? "CONCERN" : "MATCH", a->gallery.ids[idx],
+                           a->gallery.refs[idx][0] ? " person=" : "", a->gallery.refs[idx], score);
                 }
             }
             g_mutex_unlock(&a->gal_lock);
         }
 
+        g_mutex_unlock(&a->model_lock);
         metrics_faces(n, f_gated, f_emb);
         g_mutex_lock(&a->gal_lock);
         gboolean show = a->overlay_on;
@@ -454,6 +522,8 @@ int main(void)
     config_defaults(&a.cfg);
     g_mutex_init(&a.gal_lock);
     g_mutex_init(&a.pharos_lock);
+    g_mutex_init(&a.model_lock);
+    snprintf(a.model_version, sizeof a.model_version, "mobilefacenet-128-int8-%s", a.cfg.embed_kind);
     a.min_eye_px = (float)a.cfg.min_eye_px;
     a.threshold = a.cfg.match_threshold;
     a.overlay_on = TRUE;
@@ -518,6 +588,7 @@ int main(void)
             /* matching cost on this chip: compare one face with 4096 synthetic entries, 25 times */
             double ns = gallery_benchmark_ns_per_entry(a.emb ? (uint32_t)embedder_dim(a.emb) : 128, 4096, 25);
             metrics_match_cost(ns, 4096);
+            a.match_ns = ns;
             syslog(LOG_INFO, "matching benchmark: %.1f ns per gallery entry (%.2f ms per face per 10,000 people)",
                    ns, ns * 10000 / 1e6);
         }

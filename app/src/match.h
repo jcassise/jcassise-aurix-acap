@@ -5,7 +5,7 @@
 
 #define AURIX_ID_LEN 64
 
-typedef enum { AURIX_CAT_ALLOW = 0, AURIX_CAT_THREAT = 1 } aurix_category;
+typedef enum { AURIX_CAT_ALLOW = 0, AURIX_CAT_THREAT = 1, AURIX_CAT_CONCERN = 2 } aurix_category;
 
 /* gallery.bin (little-endian):
  *   char magic[4] = "AURG"; u32 version (1 or 2); u32 dim; u32 count;
@@ -18,7 +18,8 @@ typedef enum { AURIX_CAT_ALLOW = 0, AURIX_CAT_THREAT = 1 } aurix_category;
  * Produced by tools/enroll.py --param. */
 typedef struct {
     uint32_t dim, count, cap;
-    char (*ids)[AURIX_ID_LEN];
+    char (*ids)[AURIX_ID_LEN];      /* display name */
+    char (*refs)[AURIX_ID_LEN];     /* Pharos personId ("" for local entries) */
     uint8_t *category;
     int8_t *emb;        /* count * dim */
     float *inv_norm;    /* per record */
@@ -28,6 +29,7 @@ int  gallery_load(const char *path, aurix_gallery *g);
 void gallery_free(aurix_gallery *g);
 void gallery_init(aurix_gallery *g, uint32_t dim);
 int  gallery_add(aurix_gallery *g, const char *id, aurix_category cat, const int8_t *emb);
+int  gallery_add_ref(aurix_gallery *g, const char *id, const char *ref, aurix_category cat, const int8_t *emb);
 
 /* Appends entries from a parameter string. Entries whose kind != `kind` or whose size != g->dim
  * are skipped (counted in *skipped_kind / *skipped_size, may be NULL). Returns entries added,

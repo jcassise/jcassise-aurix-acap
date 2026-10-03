@@ -13,6 +13,7 @@ int main(int c, char **v) {
     metrics_recognition(0.45, 40, "watchlist");
     metrics_gallery(3, 2, 1, "Settings", 3 * 197);
     metrics_match_cost(25.5, 4096);
+    metrics_sync(1890, 0, 3, 3, 0, 0);
     metrics_pharos("Connected", "", 42);
     metrics_sample(5, "/tmp");
     for (int w = 0; w < 3; w++) {                 /* three 5-s windows of synthetic activity */

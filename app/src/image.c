@@ -1,6 +1,8 @@
 #include "image.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 static inline uint8_t clamp_u8(int v) { return v < 0 ? 0 : v > 255 ? 255 : (uint8_t)v; }
 
@@ -60,3 +62,21 @@ void resize_bilinear(const aurix_image *src, aurix_image *dst)
     const float m[6] = { sx, 0.0f, 0.5f * sx - 0.5f, 0.0f, sy, 0.5f * sy - 0.5f };
     warp_affine_bilinear(src, dst, m);
 }
+
+int image_letterbox(const aurix_image *src, double aspect, aurix_image *c, int *ox, int *oy)
+{
+    int w = src->w, h = src->h;
+    int cw = w, ch = h;
+    if ((double)w / h < aspect) cw = (int)(h * aspect + 0.5);
+    else ch = (int)(w / aspect + 0.5);
+    unsigned char *px = malloc((size_t)cw * ch * 3);
+    if (!px) return -1;
+    memset(px, 128, (size_t)cw * ch * 3);
+    *ox = (cw - w) / 2;
+    *oy = (ch - h) / 2;
+    for (int y = 0; y < h; y++)
+        memcpy(px + ((size_t)(y + *oy) * cw + *ox) * 3, src->data + (size_t)y * src->stride, (size_t)w * 3);
+    *c = (aurix_image){ px, cw, ch, cw * 3, 3 };
+    return 0;
+}
+

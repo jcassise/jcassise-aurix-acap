@@ -5,6 +5,7 @@
 #define AURIX_PHAROS_H
 #include <jansson.h>
 #include "pharos_config.h"
+#include "person_store.h"
 
 typedef enum {
     PS_DISABLED = 0,       /* not commissioned */
@@ -27,6 +28,7 @@ typedef struct {
     char sw_version[32], model_version[128];
     char hw_model[64], serial[64], firmware[64];
     double default_threshold;
+    int max_people;                    /* capacity estimate reported in /hello (0 = omit) */
 } pharos_settings;
 
 typedef struct {
@@ -44,8 +46,14 @@ typedef struct {
     void (*state_changed)(pharos_state s, const char *detail, void *user);
     /* Execute a command; return "done" | "failed" | "unsupported" and optionally a detail. */
     const char *(*command)(const char *type, const json_t *args, char *detail, size_t len, void *user);
+    /* Identity sync: build a template from a JPEG photo (0 = ok), and people/templates changed. */
+    int (*enroll)(const unsigned char *jpeg, size_t len, int8_t emb[PS_DIM], char *why, size_t why_len, void *user);
+    void (*people_changed)(const ps_store *s, void *user);
     void *user;
 } pharos_hooks;
+
+/* Pharos time minus camera time, from serverTime in /hello and status replies (0 = unknown). */
+long long pharos_clock_offset_ms(void);
 
 typedef struct pharos pharos;
 

@@ -1,5 +1,6 @@
 #include "pharos.h"
 #include "pharos_http.h"
+#include "sync.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <ifaddrs.h>
@@ -44,13 +45,28 @@ struct pharos {
     long long clock_drift_ms;
     int status_interval_ms;
     unsigned long long cpu_prev_total, cpu_prev_idle;
+    sync_ctx *sync;
 };
+
+static volatile long long g_clock_offset_ms;
+long long pharos_clock_offset_ms(void) { return g_clock_offset_ms; }
 
 static long long now_ms(void)
 {
     struct timespec t;
     clock_gettime(CLOCK_REALTIME, &t);
     return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+static long long pharos_ms(void) { return now_ms() + g_clock_offset_ms; }
+
+static void note_server_time(pharos *p, long long server, long long t0, long long t1)
+{
+    if (server <= 0) return;
+    long long off = server - (t0 + t1) / 2;          /* Pharos minus camera, half the round trip */
+    /* smooth small jitter; jump straight to large corrections (first reading, clock step) */
+    g_clock_offset_ms = (llabs(off - g_clock_offset_ms) > 2000 || !g_clock_offset_ms) ? off : (g_clock_offset_ms * 7 + off) / 8;
+    p->clock_drift_ms = -g_clock_offset_ms;
 }
 
 /* Sleeps up to ms; returns 1 if asked to stop. */
@@ -265,6 +281,8 @@ static outcome do_hello(pharos *p, int *backoff, long long *wait)
     if (p->s.model_version[0]) json_object_set_new(sw, "modelVersion", json_string(p->s.model_version));
     json_t *req = json_pack("{s:s,s:i,s:o,s:o,s:o}", "deviceId", p->s.device_id, "protocol", PROTOCOL,
                             "software", sw, "platform", plat, "capabilities", caps);
+    if (p->s.max_people > 0)   /* proposed contract addition: device capacity */
+        json_object_set_new(req, "limits", json_pack("{s:i,s:i}", "maxPeople", p->s.max_people, "maxPhotosPerPerson", PS_MAX_PHOTOS));
     long long t0 = now_ms();
     ph_response r = post_json(p, "/hello", req);
     long long t1 = now_ms();
@@ -278,8 +296,7 @@ static outcome do_hello(pharos *p, int *backoff, long long *wait)
             *wait = 5000;
             o = OC_RETRY;
         } else {
-            long long st = json_integer_value(json_object_get(b, "serverTime"));
-            if (st > 0) p->clock_drift_ms = (t0 + t1) / 2 - st;
+            note_server_time(p, json_integer_value(json_object_get(b, "serverTime")), t0, t1);
             if (llabs(p->clock_drift_ms) > 5000)
                 syslog(LOG_WARNING, "pharos: camera clock differs from Pharos by %lld ms - check NTP", p->clock_drift_ms);
             int si = (int)json_integer_value(json_object_get(b, "statusIntervalMs"));
@@ -299,12 +316,7 @@ static json_t *build_status(pharos *p, json_t *results)
 {
     pharos_snapshot s = { 0 };
     if (p->h.snapshot) p->h.snapshot(&s, p->h.user);
-    json_t *sync = json_pack("{s:I,s:I,s:i,s:i,s:i,s:s}", "revision", (json_int_t)s.sync_revision,
-                             "policiesRevision", (json_int_t)s.policies_revision, "people", s.people,
-                             "templatesReady", s.templates_ready, "templatesFailed", s.templates_failed,
-                             "inProgress", "none");
-    json_object_set_new(sync, "lastSuccessAt", s.last_sync_ok_ms ? json_integer(s.last_sync_ok_ms) : json_null());
-    json_object_set_new(sync, "lastError", json_null());
+    json_t *sync = sync_status_json(p->sync);
     json_t *queue = json_pack("{s:i,s:i,s:n}", "eventsPending", s.events_pending, "imagesPending", s.images_pending,
                               "oldestPendingAt");
     json_t *health = json_pack("{s:f,s:I,s:[{s:s,s:b}]}", "fps", s.fps < 0 ? 0 : s.fps, "clockDriftMs",
@@ -312,7 +324,7 @@ static json_t *build_status(pharos *p, json_t *results)
     double cpu = cpu_pct(p), t = temp_c();
     if (cpu >= 0) json_object_set_new(health, "cpuPct", json_real(cpu > 100 ? 100 : cpu));
     if (t > -999) json_object_set_new(health, "tempC", json_real(t));
-    json_t *req = json_pack("{s:I,s:I,s:O,s:O,s:O,s:o,s:o,s:o,s:o}", "time", (json_int_t)now_ms(),
+    json_t *req = json_pack("{s:I,s:I,s:O,s:O,s:O,s:o,s:o,s:o,s:o}", "time", (json_int_t)pharos_ms(),
                             "appliedConfigRevision", (json_int_t)p->config_rev, "appliedConfig", p->applied,
                             "rejectedConfig", p->rejected, "unsupportedConfig", p->unsupported, "sync", sync,
                             "queue", queue, "health", health, "commandResults", results);
@@ -368,8 +380,25 @@ static json_t *run_commands(pharos *p, json_t *cmds)
         const cmd_rec *r = find_cmd(p, id);
         if (!r) {
             char detail[160] = "";
-            const char *st = p->h.command ? p->h.command(type, json_object_get(c, "args"), detail, sizeof detail, p->h.user)
-                                          : "unsupported";
+            const char *st;
+            if (!strcmp(type, "resync")) {
+                sync_request_full(p->sync, 1);
+                st = "done";
+                snprintf(detail, sizeof detail, "full sync started");
+            } else if (!strcmp(type, "reenroll")) {
+                json_t *ids = json_object_get(json_object_get(c, "args"), "personIds");
+                const char *list[256];
+                int n = 0;
+                size_t k;
+                json_t *x;
+                json_array_foreach(ids, k, x) if (n < 256 && json_is_string(x)) list[n++] = json_string_value(x);
+                int m = sync_reenroll(p->sync, n ? list : NULL, n);
+                st = "done";
+                snprintf(detail, sizeof detail, "%d photo(s) queued for new templates", m);
+            } else {
+                st = p->h.command ? p->h.command(type, json_object_get(c, "args"), detail, sizeof detail, p->h.user)
+                                  : "unsupported";
+            }
             syslog(LOG_INFO, "pharos: command %s (%s) -> %s%s%s", id, type, st, *detail ? ": " : "", detail);
             r = remember_cmd(p, id, st, detail);
             dirty = 1;
@@ -416,7 +445,9 @@ static void *run(void *arg)
         while (!p->stop) {
             json_t *req = build_status(p, results);
             results = json_array();
+            long long t0 = now_ms();
             ph_response r = post_json(p, status_path, req);
+            long long t1 = now_ms();
             json_decref(req);
             wait = 0;
             o = classify(p, &r, &backoff, &wait, "status");
@@ -433,6 +464,7 @@ static void *run(void *arg)
                     wait = 5000;
                 } else {
                     if (p->state != PS_CONNECTED) set_state(p, PS_CONNECTED, NULL);
+                    note_server_time(p, json_integer_value(json_object_get(b, "serverTime")), t0, t1);
                     apply_config(p, json_integer_value(rev), cfg);
                     json_decref(results);
                     results = run_commands(p, cmds);
@@ -440,7 +472,13 @@ static void *run(void *arg)
                     interval = n >= 500 && n <= 60000 ? n : p->status_interval_ms;
                     json_decref(b);
                     ph_response_free(&r);
-                    if (nap(p, interval)) break;
+                    /* identity sync in the time left before the next status report */
+                    long long budget = interval * 6 / 10;
+                    sync_result sr = sync_step(p->sync, p->http, &p->cfg, pharos_ms(), budget);
+                    if (sr == SY_AUTH) { set_state(p, PS_CREDENTIALS_REJECTED, "check device ID and token"); o = OC_AUTH; wait = 60000; break; }
+                    if (sr == SY_REVOKED) { set_state(p, PS_REVOKED, "device revoked in Pharos"); o = OC_REVOKED; break; }
+                    long long left = interval - (now_ms() - t0);
+                    if (nap(p, left > 100 ? left : 100)) break;
                     continue;
                 }
             }
@@ -479,6 +517,10 @@ pharos *pharos_start(const pharos_settings *s, const pharos_hooks *h)
     load_commands(p);
     p->status_interval_ms = 2000;
     srand((unsigned)now_ms());
+    sync_hooks sh = { h->enroll, h->people_changed, h->user };
+    p->sync = sync_new(s->state_dir, s->device_id, s->model_version, &sh);
+    const char *jit = getenv("AURIX_SYNC_JITTER_MS");      /* tests: 0 */
+    if (jit && p->sync) sync_set_full_jitter_ms(p->sync, atoi(jit));
     if (h->apply_config) h->apply_config(&p->cfg, p->config_rev, h->user);
     if (!s->url[0] || !s->device_id[0] || !s->token[0]) {
         set_state(p, PS_DISABLED, NULL);
@@ -497,6 +539,7 @@ void pharos_stop(pharos *p)
     pthread_cond_broadcast(&p->cv);
     pthread_mutex_unlock(&p->mu);
     if (p->th) pthread_join(p->th, NULL);
+    sync_free(p->sync);
     ph_client_free(p->http);
     json_decref(p->applied); json_decref(p->rejected); json_decref(p->unsupported);
     explicit_bzero(p->s.token, sizeof p->s.token);

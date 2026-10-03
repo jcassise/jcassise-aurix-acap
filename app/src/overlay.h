@@ -1,11 +1,11 @@
 /* AURIX - live-view overlay (axoverlay + cairo). Boxes are drawn on every video stream.
- *   green  = matched, allowed       red   = matched, threat
+ *   green  = matched, allowed       red   = matched, threat      amber = matched, concern
  *   blue   = identified as unknown  grey  = face too small / not yet checked */
 #ifndef AURIX_OVERLAY_H
 #define AURIX_OVERLAY_H
 #include "match.h"
 
-typedef enum { OV_PENDING = 0, OV_UNKNOWN, OV_ALLOW, OV_THREAT } overlay_state;
+typedef enum { OV_PENDING = 0, OV_UNKNOWN, OV_ALLOW, OV_THREAT, OV_CONCERN } overlay_state;
 
 typedef struct {
     float x0, y0, x1, y1;          /* normalised 0..1 in the analysed frame */

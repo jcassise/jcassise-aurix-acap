@@ -27,7 +27,7 @@
             "vendorId": "1234567890",
             "vendorUrl": "https://cassise.com",
             "runMode": "respawn",
-            "version": "0.5.3",
+            "version": "0.6.0",
             "compatibleOsVersions": [
                 {
                     "max": "13"

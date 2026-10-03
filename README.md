@@ -37,6 +37,10 @@ app/src/overlay.*      live-view boxes: green allow, red threat, blue unknown, g
 app/src/pharos*.{c,h}  AURIX–Pharos protocol v1 client: HTTPS + pinning, /hello, status loop,
                        config read-back, once-only commands, §8 errors/backoff
 app/src/metrics.*      live performance metrics (per-stage time, faces, matches, history)
+app/src/sync.*         identity sync with Pharos: poll, delta/full (staged, atomic), deletions, photos
+app/src/person_store.* people + on-camera templates, persisted in localdata/pharos/people.json
+app/src/enroll.*       photo -> template on the camera (same detector/aligner/embedder as live)
+app/src/jpeg.*         JPEG decoding (stb_image)
 app/src/capacity.*     people-capacity estimate (memory, storage, matching speed)
 app/src/sysinfo.*      CPU, memory, temperature, storage from /proc and /sys
 app/src/web.*          dashboard over the camera's web server (FastCGI, aurix.cgi)
@@ -117,10 +121,12 @@ mismatch, Revoked, …). While commissioned, Pharos owns the match threshold and
 face size; the local MatchThreshold setting is ignored. The last config from Pharos is
 kept in `localdata/pharos/` and applied at boot even if Pharos is unreachable.
 
-Implemented now: `/hello`, status every `statusIntervalMs` with `appliedConfig` /
-`rejectedConfig` / `unsupportedConfig`, commands executed once (remembered across
-restarts; all report `unsupported` until their features land), errors and backoff per §8.
-Next: identity sync (§5), events and stills (§7).
+Implemented: `/hello` (with capacity `limits`), status with config read-back, once-only
+commands (`resync`, `reenroll` real), errors/backoff (§8), and **identity sync (§5)**: people
+and photos from Pharos become on-camera templates (one per photo, up to 5 per person);
+full syncs are staged and only applied when complete; deletions; policies stored; clock
+offset kept from Pharos `serverTime`. Watchlist classes: green = allowed, amber = Concern,
+red = Threat. Next: events and stills (§7).
 
 ## Install and watch
 

@@ -30,6 +30,7 @@ void metrics_gallery(int total, int allow, int threat, const char *source, unsig
 void metrics_match_cost(double ns_per_entry, unsigned bench_entries);
 void metrics_recognition(double threshold, double min_eye_px, const char *mode);
 void metrics_pharos(const char *state, const char *detail, long long config_rev);
+void metrics_sync(long long revision, long long last_ok_ms, int people, int ready, int failed, int pending);
 
 /* Roll the current window into history (call every `interval_s`, e.g. 5 s). */
 void metrics_sample(double interval_s, const char *storage_path);

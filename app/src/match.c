@@ -25,12 +25,20 @@ void gallery_init(aurix_gallery *g, uint32_t dim)
 
 int gallery_add(aurix_gallery *g, const char *id, aurix_category cat, const int8_t *emb)
 {
+    return gallery_add_ref(g, id, "", cat, emb);
+}
+
+int gallery_add_ref(aurix_gallery *g, const char *id, const char *ref, aurix_category cat, const int8_t *emb)
+{
     if (g->dim == 0) return -1;
     if (g->count == g->cap) {
         uint32_t cap = g->cap ? g->cap * 2 : 16;
         void *ids = realloc(g->ids, (size_t)cap * AURIX_ID_LEN);
         if (!ids) return -1;
         g->ids = ids;
+        void *refs = realloc(g->refs, (size_t)cap * AURIX_ID_LEN);
+        if (!refs) return -1;
+        g->refs = refs;
         void *c = realloc(g->category, cap);
         if (!c) return -1;
         g->category = c;
@@ -45,6 +53,8 @@ int gallery_add(aurix_gallery *g, const char *id, aurix_category cat, const int8
     uint32_t i = g->count++;
     memset(g->ids[i], 0, AURIX_ID_LEN);
     strncpy(g->ids[i], id, AURIX_ID_LEN - 1);
+    memset(g->refs[i], 0, AURIX_ID_LEN);
+    strncpy(g->refs[i], ref ? ref : "", AURIX_ID_LEN - 1);
     g->category[i] = (uint8_t)cat;
     memcpy(g->emb + (size_t)i * g->dim, emb, g->dim);
     int32_t n2 = dot_s8(emb, emb, g->dim);
@@ -75,7 +85,7 @@ int gallery_load(const char *path, aurix_gallery *g)
         if (ver == 2 && fread(&cat, 1, 1, f) != 1) goto fail;
         if (fread(e, 1, dim, f) != dim) goto fail;
         id[AURIX_ID_LEN - 1] = '\0';
-        if (gallery_add(g, id, cat == AURIX_CAT_THREAT ? AURIX_CAT_THREAT : AURIX_CAT_ALLOW, e)) goto fail;
+        if (gallery_add(g, id, cat == AURIX_CAT_THREAT ? AURIX_CAT_THREAT : cat == AURIX_CAT_CONCERN ? AURIX_CAT_CONCERN : AURIX_CAT_ALLOW, e)) goto fail;
     }
     free(e);
     fclose(f);
@@ -90,6 +100,7 @@ fail:
 void gallery_free(aurix_gallery *g)
 {
     free(g->ids);
+    free(g->refs);
     free(g->category);
     free(g->emb);
     free(g->inv_norm);
@@ -239,7 +250,7 @@ int gallery_best(const aurix_gallery *g, const int8_t *q, float *score)
 unsigned long gallery_bytes(const aurix_gallery *g)
 {
     if (!g || !g->cap) return 0;
-    return (unsigned long)g->cap * (AURIX_ID_LEN + 1 + g->dim + sizeof(float));
+    return (unsigned long)g->cap * (2 * AURIX_ID_LEN + 1 + g->dim + sizeof(float));
 }
 
 double gallery_benchmark_ns_per_entry(uint32_t dim, uint32_t entries, int rounds)

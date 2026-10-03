@@ -17,6 +17,7 @@ static void color_for(overlay_state s, double *r, double *g, double *b)
     switch (s) {
     case OV_ALLOW:  *r = 0.10; *g = 0.85; *b = 0.20; break;   /* green */
     case OV_THREAT: *r = 0.95; *g = 0.10; *b = 0.10; break;   /* red */
+    case OV_CONCERN:*r = 1.00; *g = 0.65; *b = 0.00; break;   /* amber */
     case OV_UNKNOWN:*r = 0.15; *g = 0.45; *b = 1.00; break;   /* blue */
     default:        *r = 0.70; *g = 0.70; *b = 0.70; break;   /* grey */
     }

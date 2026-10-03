@@ -10,6 +10,7 @@
 #include "embed_meta.h"
 #include "sysinfo.h"
 #include "capacity.h"
+#include "jpeg.h"
 
 #ifndef FIXTURES
 #define FIXTURES "fixtures"
@@ -297,6 +298,35 @@ static void test_capacity(void)
     printf("info: matching benchmark here %.1f ns per entry\n", ns);
 }
 
+static void test_jpeg_and_letterbox(void)
+{
+    FILE *f = fopen(FIXTURES "/astronaut_portrait.jpg", "rb");
+    CHECK(f != NULL, "missing jpeg fixture");
+    if (!f) return;
+    static unsigned char buf[200000];
+    size_t n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    aurix_image im;
+    char why[128] = "";
+    CHECK(jpeg_decode_rgb(buf, n, 1600, &im, why, sizeof why) == 0 && im.w == 300 && im.h == 450, "decode %dx%d %s", im.w, im.h, why);
+    /* a skin-tone pixel near the face centre survives decoding (astronaut face ~ (150,120) in the crop) */
+    const uint8_t *p = im.data + (120 * im.w + 150) * 3;
+    CHECK(p[0] > p[2] && p[0] > 120, "face pixel %u,%u,%u", p[0], p[1], p[2]);
+    aurix_image small;
+    CHECK(jpeg_decode_rgb(buf, n, 100, &small, why, sizeof why) == 0 && small.h == 100 && small.w == 67, "downscale %dx%d", small.w, small.h);
+    free(small.data);
+    aurix_image c;
+    int ox, oy;
+    CHECK(image_letterbox(&im, 640.0 / 352.0, &c, &ox, &oy) == 0, "letterbox failed");
+    CHECK(c.h == 450 && fabs((double)c.w / c.h - 640.0 / 352.0) < 0.01 && oy == 0 && ox == (c.w - 300) / 2,
+          "letterbox %dx%d off %d,%d", c.w, c.h, ox, oy);
+    CHECK(!memcmp(c.data + ((size_t)10 * c.w + ox) * 3, im.data + (size_t)10 * im.w * 3, (size_t)im.w * 3), "letterbox moved pixels");
+    CHECK(c.data[0] == 128 && c.data[1] == 128, "padding not grey");
+    free(c.data);
+    free(im.data);
+    CHECK(jpeg_decode_rgb((const unsigned char *)"not a jpeg at all", 17, 1600, &im, why, sizeof why) != 0 && why[0], "garbage accepted");
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -311,6 +341,7 @@ int main(void)
     test_gallery_v2_file();
     test_sysinfo_parsers();
     test_capacity();
+    test_jpeg_and_letterbox();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

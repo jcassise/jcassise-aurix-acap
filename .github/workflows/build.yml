@@ -86,10 +86,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libjansson-dev libssl-dev
-      - run: pip install jsonschema cryptography openapi-spec-validator pyyaml
+      - run: pip install jsonschema cryptography openapi-spec-validator pyyaml pillow
       - name: Contract package is consistent
         run: python3 contract/tools/build_and_check.py
-      - name: Protocol scenarios (S1, S2, S3, S10, S11, errors)
+      - name: Protocol and identity-sync scenarios
         run: make -C tests/pharos run
 
   dashboard:

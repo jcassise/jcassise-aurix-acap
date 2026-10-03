@@ -21,4 +21,8 @@ void warp_affine_bilinear(const aurix_image *src, aurix_image *dst, const float 
 /* Bilinear resize of src into dst (pixel-centre aligned). */
 void resize_bilinear(const aurix_image *src, aurix_image *dst);
 
+/* Letterbox into a canvas of the given aspect ratio (grey padding) so portraits are not stretched.
+ * Returns 0 with a malloc'd canvas and the original's offset inside it. */
+int image_letterbox(const aurix_image *src, double aspect, aurix_image *canvas, int *off_x, int *off_y);
+
 #endif

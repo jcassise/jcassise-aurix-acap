@@ -161,16 +161,16 @@ check("S3b last config applied offline after restart", "APPLY threshold=0.500" i
 
 # S10 command executed exactly once; result reported; survives restart
 sim = fresh()
-sim.commands = [{"commandId": "c-78", "type": "resync", "args": {}},
+sim.commands = [{"commandId": "c-78", "type": "captureScene", "args": {"streamId": "main"}},
                 {"commandId": "c-79", "type": "teleport", "args": {}}]
 out, sd = run(sim, 2.5)
-check("S10 resync executed once", out.count("EXEC resync") == 1, out.count("EXEC resync"))
+check("S10 command executed once", out.count("EXEC captureScene") == 1, out.count("EXEC captureScene"))
 check("S10 results reported", sim.results_seen.get("c-78", {}).get("status") == "done"
       and sim.results_seen.get("c-79", {}).get("status") == "unsupported", str(sim.results_seen))
 sim.results_seen.clear()
-sim.commands = [{"commandId": "c-78", "type": "resync", "args": {}}]       # Pharos re-sends after restart
+sim.commands = [{"commandId": "c-78", "type": "captureScene", "args": {}}]   # Pharos re-sends after restart
 out, _ = run(sim, 1.5, state_dir=sd)
-check("S10 not re-executed after restart", "EXEC resync" not in out and "c-78" in sim.results_seen, out[-200:])
+check("S10 not re-executed after restart", "EXEC captureScene" not in out and "c-78" in sim.results_seen, out[-200:])
 sim.stop()
 
 # S11 revocation: 410 -> stop all traffic (count requests while the client is still running)

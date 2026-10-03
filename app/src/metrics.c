@@ -44,6 +44,8 @@ static struct {
     char mode[24];
     char ph_state[64], ph_detail[200];
     long long ph_rev, ph_since;
+    long long sy_rev, sy_last_ok;
+    int sy_people, sy_ready, sy_failed, sy_pending;
 } M = { .mu = PTHREAD_MUTEX_INITIALIZER };
 
 static long long now_ms(void)
@@ -153,6 +155,14 @@ void metrics_pharos(const char *state, const char *detail, long long rev)
     pthread_mutex_unlock(&M.mu);
 }
 
+void metrics_sync(long long rev, long long last_ok, int people, int ready, int failed, int pending)
+{
+    pthread_mutex_lock(&M.mu);
+    M.sy_rev = rev; M.sy_last_ok = last_ok; M.sy_people = people;
+    M.sy_ready = ready; M.sy_failed = failed; M.sy_pending = pending;
+    pthread_mutex_unlock(&M.mu);
+}
+
 void metrics_sample(double dt, const char *storage_path)
 {
     sys_reading s;
@@ -249,6 +259,9 @@ json_t *metrics_json(void)
     }
     json_object_set_new(o, "pharos", json_pack("{s:s,s:s,s:I,s:I}", "state", M.ph_state, "detail", M.ph_detail,
         "configRevision", (json_int_t)M.ph_rev, "sinceMs", (json_int_t)M.ph_since));
+    json_object_set_new(o, "sync", json_pack("{s:I,s:I,s:i,s:i,s:i,s:i}", "revision", (json_int_t)M.sy_rev,
+        "lastOkMs", (json_int_t)M.sy_last_ok, "people", M.sy_people, "templatesReady", M.sy_ready,
+        "templatesFailed", M.sy_failed, "templatesPending", M.sy_pending));
 
     json_t *hist = json_array();
     for (int i = 0; i < M.hist_n; i++) {

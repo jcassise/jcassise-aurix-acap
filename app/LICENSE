@@ -1,2 +1,5 @@
 Copyright (c) 2026 AURIX. All rights reserved.
 Proprietary and confidential. Licence terms to be confirmed before distribution.
+
+Third-party code included in this package:
+- stb_image (JPEG decoding) by Sean Barrett - MIT License / public domain (app/src/third_party/stb_image.h)
