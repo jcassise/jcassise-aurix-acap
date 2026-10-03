@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <syslog.h>
 
 static char *dup_str(const char *s, size_t *len)
@@ -166,6 +167,10 @@ static void *fcgi_loop(void *arg)
         web_request rq = { method, FCGX_GetParam("REQUEST_URI", req.envp), body, got > 0 ? (size_t)got : 0,
                            xr && !strcmp(xr, "1") };
         web_reply r = web_route(&rq, g_html, &g_wc);
+        static unsigned served;
+        if (++served <= 3 || r.status >= 400)
+            syslog(r.status >= 500 ? LOG_ERR : LOG_INFO, "web: %s %s -> %d", method ? method : "?",
+                   rq.uri ? rq.uri : "?", r.status);
         if (body) { explicit_bzero(body, (size_t)want); free(body); }
         FCGX_FPrintF(req.out, "Status: %d\r\nContent-Type: %s\r\nCache-Control: no-store\r\n"
                               "X-Content-Type-Options: nosniff\r\nContent-Length: %lu\r\n\r\n",  /* libfcgi printf has no %zu */
@@ -189,10 +194,14 @@ int web_start(const char *html_path, const web_commissioning *wc)
     if (FCGX_Init()) { syslog(LOG_ERR, "web: FCGX_Init failed"); return -1; }
     int sock = FCGX_OpenSocket(path, 5);
     if (sock < 0) { syslog(LOG_ERR, "web: cannot open %s", path); return -1; }
+    /* The camera's web server runs as another user: it must be allowed to connect, or every
+     * request is answered 503 (same as Axis' FastCGI examples). */
+    if (chmod(path, S_IRWXU | S_IRWXG | S_IRWXO) != 0)
+        syslog(LOG_ERR, "web: cannot set permissions on %s - the page will answer 503", path);
     pthread_t th;
     if (pthread_create(&th, NULL, fcgi_loop, (void *)(long)sock)) return -1;
     pthread_detach(th);
-    syslog(LOG_INFO, "web: dashboard at /local/aurix/aurix.cgi");
+    syslog(LOG_INFO, "web: dashboard at /local/aurix/aurix.cgi (socket %s)", path);
     return 0;
 }
 #endif

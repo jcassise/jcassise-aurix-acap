@@ -11,6 +11,9 @@ SOCK=$(mktemp -u /tmp/aurix-web-XXXX.sock)
 FCGI_SOCK="$SOCK" ./webhost "$HTML" & PID=$!
 trap 'kill $PID 2>/dev/null; rm -f "$SOCK" data.http page.http metrics.json webhost; rm -rf /tmp/aurix-webhost-commission' EXIT
 for i in 1 2 3 4 5 6 7 8 9 10; do [ -S "$SOCK" ] && break; sleep 0.3; done
+MODE=$(stat -c %a "$SOCK")
+[ "$MODE" = "777" ] || { echo "FAIL socket mode $MODE: the camera's web server (another user) could not connect -> 503"; exit 1; }
+echo "PASS socket is connectable by the camera's web server (mode $MODE)"
 REQUEST_METHOD=GET REQUEST_URI='/local/aurix/aurix.cgi?data' cgi-fcgi -bind -connect "$SOCK" > data.http
 REQUEST_METHOD=GET REQUEST_URI='/local/aurix/aurix.cgi' cgi-fcgi -bind -connect "$SOCK" > page.http
 python3 check_http.py data.http page.http metrics.json
