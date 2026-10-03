@@ -3,9 +3,13 @@ name: build-acap
 on:
   push:
     branches: [main]
-    tags: ["v*"]          # a version tag publishes a release (see the release job)
   pull_request:
   workflow_dispatch:
+
+# A newer push to the same branch cancels a run still in progress (no pile-up of identical builds).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Converts the models at build time so weights never live in git.
@@ -106,8 +110,9 @@ jobs:
       - name: Dashboard end-to-end (FastCGI endpoint + page in jsdom)
         run: tests/web/run.sh
 
-  # Every push: build the release metadata exactly as a release would, so problems show before release day.
+  # Pull requests: build the release metadata exactly as a release would (dry run), so problems show early.
   release-preview:
+    if: github.event_name == 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -126,26 +131,43 @@ jobs:
           path: release-out/
           retention-days: 7
 
-  # Pushing a tag like v0.8.1 publishes a GitHub release Pharos can poll:
-  #   https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+  # Push to main with a new version in the manifests -> once everything passes, CI creates the tag and
+  # publishes the release itself. Same version as an existing release -> nothing is published.
+  # Pharos polls: https://github.com/<owner>/<repo>/releases/latest/download/latest.json
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build, host-tests, pharos-protocol, dashboard]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Version, and whether it is already released
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(python3 -c "import json;print(json.load(open('app/manifest.json.aarch64'))['acapPackageConf']['setup']['version'])")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"; echo "v$v is already released - nothing to publish"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"; echo "v$v is new - publishing"
+          fi
       - uses: actions/download-artifact@v4
+        if: steps.ver.outputs.new == 'true'
         with:
           pattern: aurix-*
           path: eaps
       - name: Release metadata
-        run: python3 tools/release_meta.py --eaps eaps --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --out release-out
-      - name: Publish the GitHub release
+        if: steps.ver.outputs.new == 'true'
+        run: python3 tools/release_meta.py --eaps eaps --repo "$GITHUB_REPOSITORY" --tag "v${{ steps.ver.outputs.version }}" --out release-out
+      - name: Tag and publish the GitHub release
+        if: steps.ver.outputs.new == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release-out/* \
-            --title "AURIX ${GITHUB_REF_NAME#v}" \
+          v="${{ steps.ver.outputs.version }}"
+          gh release create "v$v" release-out/* --target "$GITHUB_SHA" \
+            --title "AURIX $v" \
             --notes "Packages for armv7hf (ARTPEC-7) and aarch64 (ARTPEC-8). Unsigned development build: installs on AXIS OS 11 and 12, not 13. Pharos reads latest.json and aurix-compat.json."

@@ -208,17 +208,15 @@ Occlusion is not measured separately: partly covered faces get lower detection s
 
 ## Releases (for Pharos auto-discovery)
 
-Push a version tag that matches the manifests' version and CI publishes a GitHub release:
-
-```sh
-git tag v0.8.1 && git push origin v0.8.1
-```
+No tagging needed. Push to `main` with a new version in the manifests and, once every build and
+test passes, CI creates the tag `v<version>` and publishes a GitHub release. A push that keeps the
+same version publishes nothing. One push = one workflow run (a newer push cancels an older run still
+in progress on the same branch).
 
 The release holds `aurix-<version>-armv7hf.eap`, `aurix-<version>-aarch64.eap`, `latest.json`
 (version, per-architecture URL, sha256, size, AXIS OS range), `aurix-compat.json` (from
 `release/compat.json`: chips, AXIS OS range, resources, tested models) and `SHA256SUMS`.
 Pharos polls the fixed address of the newest release:
 `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`.
-CI refuses to publish if the tag and the manifests disagree or a package is missing; every push
-also builds the metadata as a dry run (`release-preview` artifact). Edit `release/compat.json`
-when a model is tested.
+Pull requests build the release metadata as a dry run (`release-preview` artifact). Edit
+`release/compat.json` when a model is tested.
