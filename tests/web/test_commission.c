@@ -81,6 +81,19 @@ int main(int argc, char **argv)
     CHECK(st == 200 && commission_load(dir, &c) == 0 && !strcmp(c.token, "secret-token-123") && strstr(c.trust, "BEGIN CERTIFICATE")
           && !strcmp(c.url, "https://pharos2.site.local"), "blank token and absent cert keep the saved ones");
 
+    {   /* commissioning with a PUBLIC KEY: accepted, summarised as a key with its pin */
+        FILE *kf = popen("openssl x509 -in /tmp/aurix-tc.pem -pubkey -noout 2>/dev/null || openssl x509 -in /tmp/tc.pem -pubkey -noout", "r");
+        char key[2048] = ""; size_t kn = fread(key, 1, sizeof key - 1, kf); key[kn] = 0; pclose(kf);
+        json_t *kb = json_pack("{s:s,s:s,s:s}", "url", "https://pharos.site.local", "deviceId", "aurix-lobby-01", "cert", key);
+        char *ks = json_dumps(kb, 0);
+        j = call(&wc, "POST", ks, 1, &st);
+        free(ks); json_decref(kb);
+        json_t *kc = json_object_get(j, "cert");
+        CHECK(st == 200 && !strcmp(json_string_value(json_object_get(kc, "kind")), "key") &&
+              !strncmp(json_string_value(json_object_get(kc, "pin")), "sha256//", 8), "public key accepted and summarised with its pin (got %d)", st);
+        json_decref(j);
+    }
+
     j = call(&wc, "POST", "{\"clear\":true}", 1, &st);
     CHECK(st == 200 && json_is_false(json_object_get(j, "commissioned")) && stat(path, &sb) != 0, "disconnect removes the saved connection");
     json_decref(j);

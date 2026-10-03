@@ -29,7 +29,7 @@ const w = dom.window, d = w.document, wait = ms => new Promise(r => setTimeout(r
   d.getElementById("cTok").value = "secret-token-123";
   const file = new w.File([der], "pharos.cer", { type: "application/x-x509-ca-cert" });
   const input = d.getElementById("cFile");
-  Object.defineProperty(input, "files", { value: [file] });
+  Object.defineProperty(input, "files", { value: [file], configurable: true });
   input.dispatchEvent(new w.Event("change"));
   await wait(200);
   d.getElementById("connForm").dispatchEvent(new w.Event("submit", { cancelable: true }));
@@ -43,6 +43,18 @@ const w = dom.window, d = w.document, wait = ms => new Promise(r => setTimeout(r
   expect(d.getElementById("cTok").value === "" && d.getElementById("cTok").placeholder.includes("Leave blank"), "token field cleared after save, never shown again");
   expect(!d.getElementById("certBox").hidden && d.getElementById("certBox").textContent.includes("pharos.site.local"), "certificate details shown for checking");
   expect(errors.length === 0, "no JS errors" + (errors.length ? ": " + errors[0] : ""));
+  // a PUBLIC KEY file is accepted and sent as-is
+  posts.length = 0;
+  const keyPem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n-----END PUBLIC KEY-----\n";
+  const kf = new w.File([Buffer.from(keyPem)], "pharos.pub", { type: "application/octet-stream" });
+  const input2 = d.getElementById("cFile");
+  Object.defineProperty(input2, "files", { value: [kf], configurable: true });
+  input2.dispatchEvent(new w.Event("change"));
+  await wait(200);
+  expect(d.getElementById("cResult").textContent.startsWith("Public key file loaded"), "public key file accepted by the panel");
+  d.getElementById("connForm").dispatchEvent(new w.Event("submit", { cancelable: true }));
+  await wait(300);
+  expect(posts.length === 1 && (posts[0].body.cert || "").includes("BEGIN PUBLIC KEY"), "public key sent to the camera");
   console.log(fails ? fails + " failure(s)" : "all connection-panel checks passed");
   process.exit(fails ? 1 : 0);
 })();

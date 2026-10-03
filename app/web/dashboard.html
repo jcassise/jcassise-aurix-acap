@@ -237,9 +237,9 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
         <input id="cTok" type="password" autocomplete="new-password" spellcheck="false">
         <small id="cTokHint">Shown once by Pharos when the device is added.</small></div>
       <div class="field"><label for="cFile">Server certificate</label>
-        <input id="cFile" type="file" accept=".pem,.crt,.cer,.der,application/x-x509-ca-cert">
-        <small id="cFileHint">Choose the Pharos certificate file (PEM or DER), or paste its fingerprint below.</small>
-        <textarea id="cText" placeholder="sha256 Fingerprint=AC:78:54:… or sha256//…" spellcheck="false"></textarea></div>
+        <input id="cFile" type="file" accept=".pem,.crt,.cer,.der,.pub,.key,application/x-x509-ca-cert">
+        <small id="cFileHint">Choose the Pharos certificate or public key file, or paste it (or its fingerprint) below.</small>
+        <textarea id="cText" placeholder="-----BEGIN PUBLIC KEY----- …, a fingerprint, or sha256//…" spellcheck="false"></textarea></div>
       <dl class="certbox" id="certBox" hidden></dl>
       <div class="actions">
         <button class="primary" type="submit" id="cSave">Save and connect</button>
@@ -475,7 +475,8 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
     var box = $("certBox"); box.textContent = "";
     if (!c || c.kind === "none") { box.hidden = true; return; }
     var rows = c.kind === "pem" ? [["Issued to", c.subject || "–"], ["Fingerprint (SHA-256)", c.fingerprint || "–"],
-      ["Expires", c.notAfter ? new Date(c.notAfter).toLocaleDateString() + (c.expired ? " (expired)" : "") : "–"]]
+      ["Key pin", c.pin || "–"], ["Expires", c.notAfter ? new Date(c.notAfter).toLocaleDateString() + (c.expired ? " (expired)" : "") : "–"]]
+      : c.kind === "key" ? [["Server public key", "Saved"], ["Key pin", c.pin || "–"]]
       : [[c.kind === "pin" ? "Key pin" : "Fingerprint", c.value || "–"]];
     rows.push(["Check", "This must match what Pharos shows for its certificate."]);
     rows.forEach(function (r) { var dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = r[0]; dd.textContent = r[1]; box.appendChild(dt); box.appendChild(dd); });
@@ -508,8 +509,10 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
     rd.onload = function () {
       var buf = rd.result, head = new TextDecoder().decode(new Uint8Array(buf).slice(0, 40));
       certPem = head.indexOf("-----BEGIN") >= 0 ? new TextDecoder().decode(buf) : derToPem(buf);
-      if (certPem.indexOf("-----BEGIN CERTIFICATE-----") < 0) { certPem = null; result("That file does not contain a certificate.", "bad"); return; }
-      $("cText").value = ""; result("Certificate file loaded. Save to use it.", "");
+      if (!/-----BEGIN (CERTIFICATE|PUBLIC KEY|RSA PUBLIC KEY)-----/.test(certPem)) {
+        certPem = null; result("That file does not contain a certificate or public key.", "bad"); return;
+      }
+      $("cText").value = ""; result((certPem.indexOf("PUBLIC KEY") >= 0 ? "Public key" : "Certificate") + " file loaded. Save to use it.", "");
     };
     rd.readAsArrayBuffer(f);
   });

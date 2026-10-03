@@ -6,6 +6,7 @@
  *   64 hex chars (':' allowed) SHA-256 fingerprint of the server certificate. Checked once with a
  *                              bare TLS handshake (no HTTP sent), then converted to an SPKI pin.
  *   -----BEGIN CERTIFICATE---- the server certificate itself; its SPKI is pinned.
+ *   -----BEGIN PUBLIC KEY----- the server's public key (what Pharos hands out); pinned directly.
  * Two pins may be given separated by ';' (rotation). With a pin, hostname/CA checks are replaced
  * by the pin, which is enforced on every connection. A mismatch is a hard failure. */
 #ifndef AURIX_PHAROS_HTTP_H
@@ -53,6 +54,9 @@ void ph_response_free(ph_response *r);
 
 /* Checks a commissioning certificate setting without connecting. 0 = usable. */
 int ph_trust_validate(const char *trust, char *why, size_t why_len);
+
+/* SPKI pin from a PEM block: CERTIFICATE, PUBLIC KEY or RSA PUBLIC KEY (one-line pastes ok). */
+int ph_pin_from_pem_text(const char *text, char *out, size_t out_len);
 
 /* Exposed for tests: SPKI pin ("sha256//...") of a PEM or DER certificate. */
 int ph_spki_pin_from_cert(const unsigned char *data, size_t len, int is_pem, char *out, size_t out_len);

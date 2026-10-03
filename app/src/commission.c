@@ -79,6 +79,12 @@ json_t *commission_cert_summary(const char *trust)
     json_t *o = json_object();
     while (trust && isspace((unsigned char)*trust)) trust++;
     if (!trust || !*trust) { json_object_set_new(o, "kind", json_string("none")); return o; }
+    if (strstr(trust, "-----BEGIN ") && !strstr(trust, "-----BEGIN CERTIFICATE-----")) {
+        char pin[80];
+        json_object_set_new(o, "kind", json_string("key"));
+        if (!ph_pin_from_pem_text(trust, pin, sizeof pin)) json_object_set_new(o, "pin", json_string(pin));
+        return o;
+    }
     if (!strstr(trust, "-----BEGIN CERTIFICATE-----")) {
         json_object_set_new(o, "kind", json_string(strstr(trust, "sha256//") || (strlen(trust) == 44 && trust[43] == '=') ? "pin" : "fingerprint"));
         json_object_set_new(o, "value", json_stringn(trust, strlen(trust) > 200 ? 200 : strlen(trust)));
@@ -88,7 +94,14 @@ json_t *commission_cert_summary(const char *trust)
     BIO *b = BIO_new_mem_buf(trust, -1);
     X509 *x = b ? PEM_read_bio_X509(b, NULL, NULL, NULL) : NULL;
     BIO_free(b);
-    if (!x) return o;
+    if (!x) {   /* e.g. a DER public key the browser wrapped as a certificate */
+        char pin[80];
+        if (!ph_pin_from_pem_text(trust, pin, sizeof pin)) {
+            json_object_set_new(o, "kind", json_string("key"));
+            json_object_set_new(o, "pin", json_string(pin));
+        }
+        return o;
+    }
     char cn[256] = "";
     X509_NAME_get_text_by_NID(X509_get_subject_name(x), NID_commonName, cn, sizeof cn);
     json_object_set_new(o, "subject", json_string(cn));

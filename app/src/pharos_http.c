@@ -110,6 +110,54 @@ static int is_b64_pin(const char *t, size_t n)
     return 1;
 }
 
+
+/* Any PEM block (CERTIFICATE, PUBLIC KEY, RSA PUBLIC KEY) or a DER blob -> SPKI pin.
+ * Whitespace inside the base64 is ignored, so one-line pastes work. Returns 0 on success. */
+static int der_to_pin(const unsigned char *der, size_t len, char *out, size_t out_len)
+{
+    if (!ph_spki_pin_from_cert(der, len, 0, out, out_len)) return 0;          /* X.509 certificate */
+    const unsigned char *p = der;
+    EVP_PKEY *k = d2i_PUBKEY(NULL, &p, (long)len);                           /* SubjectPublicKeyInfo */
+    if (!k) { p = der; k = d2i_PublicKey(EVP_PKEY_RSA, NULL, &p, (long)len); } /* PKCS#1 RSA key */
+    if (!k) return -1;
+    unsigned char *spki = NULL;
+    int sl = i2d_PUBKEY(k, &spki);
+    EVP_PKEY_free(k);
+    if (sl <= 0) return -1;
+    unsigned char h[SHA256_DIGEST_LENGTH], b64[64];
+    SHA256(spki, (size_t)sl, h);
+    OPENSSL_free(spki);
+    if (EVP_EncodeBlock(b64, h, sizeof h) <= 0) return -1;
+    snprintf(out, out_len, "sha256//%s", b64);
+    return 0;
+}
+
+int ph_pin_from_pem_text(const char *text, char *out, size_t out_len)
+{
+    const char *b = strstr(text, "-----BEGIN ");
+    if (!b) return -1;
+    const char *body = strstr(b + 11, "-----");
+    if (!body) return -1;
+    body += 5;
+    const char *e = strstr(body, "-----END");
+    if (!e) return -1;
+    size_t n = (size_t)(e - body);
+    unsigned char *clean = malloc(n + 4), *der = malloc(n + 4);
+    if (!clean || !der) { free(clean); free(der); return -1; }
+    size_t k = 0;
+    for (const char *q = body; q < e; q++)
+        if (isalnum((unsigned char)*q) || *q == '+' || *q == '/' || *q == '=') clean[k++] = (unsigned char)*q;
+    int pad = (k > 0 && clean[k - 1] == '=') + (k > 1 && clean[k - 2] == '=');
+    int rc = -1;
+    if (k && k % 4 == 0) {
+        int dl = EVP_DecodeBlock(der, clean, (int)k);
+        if (dl > pad) rc = der_to_pin(der, (size_t)(dl - pad), out, out_len);
+    }
+    free(clean);
+    free(der);
+    return rc;
+}
+
 static int add_pin(ph_client *c, const char *pin)
 {
     size_t need = strlen(c->pins) + strlen(pin) + 2;
@@ -126,24 +174,11 @@ static int parse_trust(ph_client *c, const char *trust, char *why, size_t wl)
     if (!trust) return 0;
     while (*trust == ' ' || *trust == '\n' || *trust == '\r' || *trust == '\t') trust++;
     if (!*trust) return 0;
-    if (strstr(trust, "-----BEGIN CERTIFICATE-----")) {
+    if (strstr(trust, "-----BEGIN ")) {
+        /* certificate or public key, multi-line or flattened into one line */
         char pin[80];
-        /* A PEM pasted into a one-line settings field loses its newlines: re-wrap the base64. */
-        const char *b0 = strstr(trust, "-----BEGIN CERTIFICATE-----") + 27;
-        const char *e0 = strstr(b0, "-----END CERTIFICATE-----");
-        char pem[8192];
-        size_t o = 0, col = 0;
-        if (e0 && (size_t)(e0 - b0) < sizeof pem - 100) {
-            o = (size_t)snprintf(pem, sizeof pem, "-----BEGIN CERTIFICATE-----\n");
-            for (const char *q = b0; q < e0; q++) {
-                if (*q == ' ' || *q == '\n' || *q == '\r' || *q == '\t') continue;
-                pem[o++] = *q;
-                if (++col == 64) { pem[o++] = '\n'; col = 0; }
-            }
-            o += (size_t)snprintf(pem + o, sizeof pem - o, "%s-----END CERTIFICATE-----\n", col ? "\n" : "");
-        }
-        if (!o || ph_spki_pin_from_cert((const unsigned char *)pem, o, 1, pin, sizeof pin)) {
-            set_err(why, wl, "Server certificate: PEM could not be parsed");
+        if (ph_pin_from_pem_text(trust, pin, sizeof pin)) {
+            set_err(why, wl, "Server certificate: the PEM block could not be read as a certificate or public key");
             return -1;
         }
         return add_pin(c, pin);

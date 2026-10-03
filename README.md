@@ -97,8 +97,8 @@ Raw JSON: `aurix.cgi?data` - usable for logging benchmarks from a script.
 
 In Pharos: Hardware → AURIX devices → Add. Then on the camera open **Apps → aurix → Open**
 and use the **Pharos connection** panel at the bottom of the AURIX page: Pharos address,
-device ID, device token (masked; never shown again) and the server certificate - choose the
-certificate **file** (PEM or DER) or paste its fingerprint. Saving validates everything,
+device ID, device token (masked; never shown again) and the server's **public key** or
+certificate - choose the file (PEM, DER, `.pub`) or paste it, or paste a fingerprint/pin. Saving validates everything,
 shows the certificate's name, fingerprint and expiry to check against Pharos, and connects.
 It is stored in `localdata/pharos/commission.json` (owner-only) and takes precedence over
 the app settings below.

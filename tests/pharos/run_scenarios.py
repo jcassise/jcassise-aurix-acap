@@ -84,6 +84,19 @@ out, _ = run(sim, 1.5, trust=sim.cert["spki_pin"].replace("+", " "))
 check("S2h pin with '+' turned into spaces connects", "STATE Connected" in out or "+" not in sim.cert["spki_pin"], out[-300:])
 sim.stop()
 
+# S2i commissioned with the server's PUBLIC KEY (what Pharos hands out), multi-line and one-line
+for label, t in (("multi-line", None), ("one-line", None)):
+    sim = fresh()
+    key = sim.cert["pubkey_pem"] if label == "multi-line" else " ".join(sim.cert["pubkey_pem"].split())
+    out, _ = run(sim, 1.5, trust=key)
+    check(f"S2i public key ({label}) connects", "STATE Connected" in out, out[-300:])
+    sim.stop()
+# ...and a different server key is refused before any request
+sim = fresh(); other = Sim(tempfile.mkdtemp())
+out, _ = run(sim, 1.5, trust=other.cert["pubkey_pem"])
+check("S2i wrong public key refused, no HTTP sent", "TLS pin mismatch" in out and not sim.log, out[-200:])
+sim.stop()
+
 # S2f PEM pasted into a one-line field (newlines lost) still works
 sim = fresh()
 out, _ = run(sim, 1.5, trust=" ".join(sim.cert["pem"].split()))

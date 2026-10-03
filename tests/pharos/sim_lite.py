@@ -33,6 +33,8 @@ def make_cert(dirpath, cn="pharos-sim"):
     der = cert.public_bytes(serialization.Encoding.DER)
     spki = cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     return {"crt": cp, "key": kp, "pem": cert.public_bytes(serialization.Encoding.PEM).decode(),
+            "pubkey_pem": cert.public_key().public_bytes(serialization.Encoding.PEM,
+                                                         serialization.PublicFormat.SubjectPublicKeyInfo).decode(),
             "fingerprint": hashlib.sha256(der).hexdigest(),
             "spki_pin": "sha256//" + base64.b64encode(hashlib.sha256(spki).digest()).decode()}
 
