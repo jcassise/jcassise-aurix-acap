@@ -2,7 +2,7 @@
 SRC = ../app/src
 CFLAGS += -O2 -std=gnu11 -Wall -Wextra -I$(SRC)
 
-test_core: test_core.c $(SRC)/align.c $(SRC)/image.c $(SRC)/match.c $(SRC)/yunet.c $(SRC)/tensor.c $(SRC)/embed_meta.c
+test_core: test_core.c $(SRC)/align.c $(SRC)/image.c $(SRC)/match.c $(SRC)/yunet.c $(SRC)/tensor.c $(SRC)/embed_meta.c $(SRC)/sysinfo.c $(SRC)/capacity.c
 	$(CC) $(CFLAGS) $^ -lm -o $@
 
 run: test_core

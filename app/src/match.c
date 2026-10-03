@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #define AURIX_NEON 1
@@ -233,4 +234,36 @@ int gallery_best(const aurix_gallery *g, const int8_t *q, float *score)
         if (s > *score) { *score = s; best = (int)i; }
     }
     return best;
+}
+
+unsigned long gallery_bytes(const aurix_gallery *g)
+{
+    if (!g || !g->cap) return 0;
+    return (unsigned long)g->cap * (AURIX_ID_LEN + 1 + g->dim + sizeof(float));
+}
+
+double gallery_benchmark_ns_per_entry(uint32_t dim, uint32_t entries, int rounds)
+{
+    aurix_gallery g;
+    gallery_init(&g, dim);
+    int8_t *e = malloc(dim), *q = malloc(dim);
+    if (!e || !q) { free(e); free(q); return 0; }
+    uint32_t seed = 12345;
+    for (uint32_t i = 0; i < dim; i++) { seed = seed * 1103515245u + 12345u; q[i] = (int8_t)((seed >> 16) % 255 - 127); }
+    for (uint32_t n = 0; n < entries; n++) {
+        for (uint32_t i = 0; i < dim; i++) { seed = seed * 1103515245u + 12345u; e[i] = (int8_t)((seed >> 16) % 255 - 127); }
+        if (gallery_add(&g, "bench", AURIX_CAT_ALLOW, e)) break;
+    }
+    float score;
+    volatile int sink = gallery_best(&g, q, &score);      /* warm caches */
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (int r = 0; r < rounds; r++) sink += gallery_best(&g, q, &score);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    (void)sink;
+    double ns = ((t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec)) / ((double)rounds * g.count);
+    gallery_free(&g);
+    free(e);
+    free(q);
+    return ns;
 }

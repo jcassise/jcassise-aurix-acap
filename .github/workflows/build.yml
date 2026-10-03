@@ -91,3 +91,12 @@ jobs:
         run: python3 contract/tools/build_and_check.py
       - name: Protocol scenarios (S1, S2, S3, S10, S11, errors)
         run: make -C tests/pharos run
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libfcgi-dev libfcgi-bin libjansson-dev
+      - run: cd tests/web && npm install --no-audit --no-fund
+      - name: Dashboard end-to-end (FastCGI endpoint + page in jsdom)
+        run: tests/web/run.sh

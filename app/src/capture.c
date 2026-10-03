@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <vdo-buffer.h>
 #include <vdo-map.h>
 #include <vdo-stream.h>
@@ -13,7 +14,21 @@ struct aurix_capture {
     unsigned w, h, pitch;
     gboolean native_rgb;   /* TRUE: VDO gives RGB; FALSE: NV12 converted on CPU */
     uint8_t *rgb;          /* conversion / packing buffer */
+    double wait_ms, convert_ms;
 };
+
+static double mono_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+}
+
+void capture_last_timing(const aurix_capture *c, double *wait_ms, double *convert_ms)
+{
+    *wait_ms = c ? c->wait_ms : 0;
+    *convert_ms = c ? c->convert_ms : 0;
+}
 
 static VdoStream *open_stream(unsigned w, unsigned h, double fps, gboolean rgb, GError **err)
 {
@@ -77,7 +92,9 @@ fail:
 int capture_next(aurix_capture *c, aurix_image *out)
 {
     GError *err = NULL;
+    double t0 = mono_ms();
     VdoBuffer *buf = vdo_stream_get_buffer(c->stream, &err);
+    double t1 = mono_ms();
     if (!buf) {
         syslog(LOG_WARNING, "VDO get_buffer: %s", err ? err->message : "unknown");
         g_clear_error(&err);
@@ -92,6 +109,8 @@ int capture_next(aurix_capture *c, aurix_image *out)
         nv12_to_rgb(data, data + (size_t)c->pitch * c->h, (int)c->w, (int)c->h, (int)c->pitch, c->rgb);
     }
     vdo_stream_buffer_unref(c->stream, &buf, NULL);
+    c->wait_ms = t1 - t0;
+    c->convert_ms = mono_ms() - t1;
 
     out->data = c->rgb;
     out->w = (int)c->w;

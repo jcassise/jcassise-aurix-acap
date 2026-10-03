@@ -1,6 +1,6 @@
 # Built inside the ACAP Native SDK container (see ../Dockerfile).
 PROG       = aurix
-PKGS       = glib-2.0 gio-2.0 vdostream liblarod cairo axparameter libcurl jansson openssl
+PKGS       = glib-2.0 gio-2.0 vdostream liblarod cairo axparameter libcurl jansson openssl fcgi
 PKG_CONFIG ?= pkg-config
 
 SRCS = $(wildcard src/*.c)

@@ -8,9 +8,9 @@
 
 static int resyncs;
 
-static void on_apply(const pc_config *c, void *u)
+static void on_apply(const pc_config *c, long long rev, void *u)
 {
-    (void)u;
+    (void)u; (void)rev;
     printf("APPLY threshold=%.3f minFace=%d mode=%s zones=%d\n", c->match_threshold, c->min_face_px,
            pc_mode_name(c->mode), c->nzones);
     fflush(stdout);

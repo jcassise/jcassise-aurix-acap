@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AURIX performance</title>
+<style>
+:root {
+  --paper: #E9EDF1; --panel: #F7F9FB; --ink: #13202D; --muted: #586878; --line: #C6CFD8;
+  --signal: #C9741F; --alert: #B8342A; --ok: #2F7A4D;
+  --s-capture: #557BA4; --s-detect: #D08A2E; --s-align: #7C9A6A; --s-embed: #8A6CB2; --s-match: #3A9696;
+  --idle: #D3DAE1;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0E161E; --panel: #15202A; --ink: #E2E9EF; --muted: #8C9FB0; --line: #2A3846;
+    --signal: #E39A45; --alert: #E2655A; --ok: #5DB07E; --idle: #26333F;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0E161E; --panel: #15202A; --ink: #E2E9EF; --muted: #8C9FB0; --line: #2A3846;
+  --signal: #E39A45; --alert: #E2655A; --ok: #5DB07E; --idle: #26333F;
+}
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+*, *::before, *::after { box-sizing: inherit; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px clamp(14px, 3vw, 32px) 40px; }
+header { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: baseline; justify-content: space-between; }
+.brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.brand b { font-size: 22px; letter-spacing: 0.06em; font-weight: 700; }
+.brand span { color: var(--muted); }
+.status { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 3px 11px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink); background: var(--panel); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.ok .dot { background: var(--ok); } .pill.bad .dot { background: var(--alert); } .pill.wait .dot { background: var(--signal); }
+button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 11px; cursor: pointer; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.banner { margin: 14px 0 0; padding: 9px 13px; border-left: 3px solid var(--signal); background: var(--panel); }
+.banner[hidden] { display: none; }
+
+/* the one bold element: where a frame's milliseconds go */
+.budget { margin: 26px 0 8px; }
+.budget-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+.fps { font-size: clamp(44px, 7vw, 68px); font-weight: 650; line-height: 1; letter-spacing: -0.02em; }
+.fps small { font-size: 0.32em; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-left: 6px; }
+.budget-note { color: var(--muted); }
+.bar { position: relative; display: flex; height: 46px; margin-top: 16px; border-radius: 4px; overflow: hidden;
+  background: repeating-linear-gradient(135deg, var(--idle) 0 6px, transparent 6px 12px), var(--panel);
+  border: 1px solid var(--line); }
+.seg { height: 100%; min-width: 0; transition: flex-basis 400ms ease; display: flex; align-items: center;
+  justify-content: center; color: #fff; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.over { position: absolute; top: -1px; bottom: -1px; right: -1px; width: 6px; background: var(--alert); }
+.over[hidden] { display: none; }
+.scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px 22px; margin-top: 16px; }
+.leg { display: grid; grid-template-columns: 12px 1fr; column-gap: 9px; }
+.leg i { width: 12px; height: 12px; border-radius: 2px; margin-top: 4px; }
+.leg strong { font-weight: 600; }
+.leg em { grid-column: 2; font-style: normal; color: var(--muted); font-size: 13px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 34px; margin-top: 28px;
+  border-top: 1px solid var(--line); }
+section { padding-top: 18px; }
+h2 { font-size: 15px; font-weight: 650; margin: 0 0 10px; }
+dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 5px 14px; }
+dt { color: var(--muted); }
+dd { margin: 0; text-align: right; }
+dd.warn { color: var(--signal); } dd.bad { color: var(--alert); }
+.meter { grid-column: 1 / -1; height: 4px; background: var(--idle); border-radius: 2px; overflow: hidden; margin: -1px 0 4px; }
+.meter b { display: block; height: 100%; background: var(--s-capture); width: 0; transition: width 400ms ease; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 34px; margin-top: 26px;
+  border-top: 1px solid var(--line); }
+.chart svg { width: 100%; height: 130px; display: block; overflow: visible; }
+.chart .key { display: flex; gap: 16px; color: var(--muted); font-size: 13px; margin: -4px 0 6px; flex-wrap: wrap; }
+.chart .key i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
+.axis { stroke: var(--line); stroke-width: 1; }
+.axis-label { fill: var(--muted); font-size: 11px; }
+.empty { color: var(--muted); padding: 10px 0; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 0; border-bottom: 1px solid var(--line); }
+td { padding: 6px 0; border-bottom: 1px solid var(--line); }
+td.num, th.num { text-align: right; }
+.cat { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 13px; color: #fff; }
+.cat.allow { background: var(--ok); } .cat.threat { background: var(--alert); }
+.tablewrap { overflow-x: auto; }
+.capacity { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
+.cap-head { font-size: clamp(22px, 3vw, 30px); font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+.cap-sub { color: var(--muted); margin: 0 0 16px; max-width: 75ch; }
+.limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px 34px; }
+.limit h3 { font-size: 14px; font-weight: 600; margin: 0 0 2px; display: flex; justify-content: space-between; gap: 10px; }
+.limit h3 span { font-weight: 500; color: var(--muted); }
+.limit.binding h3 { color: var(--signal); }
+.limit p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.track { position: relative; height: 10px; background: var(--idle); border-radius: 5px; margin-top: 6px; overflow: hidden; }
+.track b { position: absolute; inset: 0 auto 0 0; background: var(--s-capture); border-radius: 5px; min-width: 2px; transition: width 400ms ease; }
+.limit.binding .track b { background: var(--signal); }
+.fine { color: var(--muted); font-size: 12px; margin: 14px 0 0; max-width: 90ch; }
+@media (prefers-reduced-motion: reduce) { .track b { transition: none; } }
+footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 22px; }
+@media (prefers-reduced-motion: reduce) { .seg, .meter b { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><b>AURIX</b><span id="ident">Connecting to camera…</span></div>
+    <div class="status">
+      <span class="pill" id="pharos" title=""><span class="dot"></span><span id="pharosText">Pharos</span></span>
+      <span id="updated" aria-live="polite"></span>
+      <button id="pause" type="button" aria-pressed="false">Pause</button>
+    </div>
+  </header>
+  <p class="banner" id="demo" hidden>Simulated readings. Open this page on the camera (Apps → aurix → Open) for live data.</p>
+  <p class="banner" id="stale" hidden>Lost contact with the camera app. Retrying every few seconds.</p>
+
+  <div class="budget" aria-label="Frame time budget">
+    <div class="budget-head">
+      <div class="fps"><span id="fps">–</span><small id="fpsTarget">fps</small></div>
+      <div class="budget-note" id="budgetNote">Waiting for the first readings…</div>
+    </div>
+    <div class="bar" id="bar" role="img" aria-label="Time per frame by stage"><div class="over" id="over" hidden></div></div>
+    <div class="scale"><span>0 ms</span><span id="scaleMid"></span><span id="scaleEnd"></span></div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="grid">
+    <section>
+      <h2>Processor and memory</h2>
+      <dl>
+        <dt>Processor</dt><dd id="cpu">–</dd><div class="meter"><b id="cpuMeter"></b></div>
+        <dt>Load (1 min / 5 min)</dt><dd id="load">–</dd>
+        <dt>Memory in use</dt><dd id="mem">–</dd><div class="meter"><b id="memMeter"></b></div>
+        <dt>AURIX memory</dt><dd id="rss">–</dd>
+        <dt>Face gallery in memory</dt><dd id="galMem">–</dd>
+        <dt>Temperature</dt><dd id="temp">–</dd>
+        <dt>App storage free</dt><dd id="storage">–</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Recognition</h2>
+      <dl>
+        <dt>Faces seen per minute</dt><dd id="detPm">–</dd>
+        <dt>Faces identified per minute</dt><dd id="embPm">–</dd>
+        <dt>Matches per minute</dt><dd id="matchPm">–</dd>
+        <dt>Matches since start</dt><dd id="matchTotal">–</dd>
+        <dt>Threat matches since start</dt><dd id="threatTotal">–</dd>
+        <dt>Match threshold</dt><dd id="thr">–</dd>
+        <dt>Smallest face checked</dt><dd id="minFace">–</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>People and Pharos</h2>
+      <dl>
+        <dt>People on this camera</dt><dd id="people">–</dd>
+        <dt>Allowed / threat</dt><dd id="peopleSplit">–</dd>
+        <dt>Loaded from</dt><dd id="source">–</dd>
+        <dt>Pharos</dt><dd id="pharosState">–</dd>
+        <dt>Configuration revision</dt><dd id="rev">–</dd>
+        <dt>Reporting mode</dt><dd id="mode">–</dd>
+      </dl>
+    </section>
+  </div>
+
+
+  <section class="capacity" aria-labelledby="capTitle">
+    <h2 id="capTitle">How many people this camera can hold</h2>
+    <p class="cap-head" id="capHead">Estimating…</p>
+    <p class="cap-sub" id="capSub"></p>
+    <div class="limits">
+      <div class="limit" id="lim-memory"><h3>Memory<span></span></h3><div class="track"><b></b></div><p></p></div>
+      <div class="limit" id="lim-storage"><h3>App storage<span></span></h3><div class="track"><b></b></div><p></p></div>
+      <div class="limit" id="lim-matching"><h3>Matching speed<span></span></h3><div class="track"><b></b></div><p></p></div>
+    </div>
+    <p class="fine" id="capFine"></p>
+  </section>
+
+  <div class="charts">
+    <section class="chart">
+      <h2>Frame rate, last 10 minutes</h2>
+      <div class="key"><span><i style="background:var(--s-capture)"></i>Frames per second</span><span><i style="background:var(--signal)"></i>Target</span></div>
+      <svg id="chartFps" role="img" aria-label="Frame rate history"></svg>
+    </section>
+    <section class="chart">
+      <h2>Processor and memory, last 10 minutes</h2>
+      <div class="key"><span><i style="background:var(--s-detect)"></i>Processor %</span><span><i style="background:var(--s-embed)"></i>Memory %</span></div>
+      <svg id="chartSys" role="img" aria-label="Processor and memory history"></svg>
+    </section>
+  </div>
+
+  <section style="margin-top:26px;border-top:1px solid var(--line)">
+    <h2>Recent matches</h2>
+    <div class="tablewrap">
+      <table><thead><tr><th>Time</th><th>Person</th><th>List</th><th class="num">Score</th></tr></thead>
+      <tbody id="recent"></tbody></table>
+    </div>
+    <p class="empty" id="recentEmpty">No matches yet. Enrolled people appear here when the camera recognises them.</p>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+<script>
+(function () {
+  "use strict";
+  var STAGES = [
+    ["capture", "Prepare", "--s-capture", "Convert the camera frame"],
+    ["detect", "Detect", "--s-detect", "Find faces"],
+    ["align", "Align", "--s-align", "Straighten each face"],
+    ["embed", "Identify", "--s-embed", "Face template, per face"],
+    ["match", "Match", "--s-match", "Compare with the gallery"]
+  ];
+  var $ = function (id) { return document.getElementById(id); };
+  var paused = false, failures = 0, demo = false, lastOk = 0, demoState = null;
+
+  function set(id, text, cls) { var e = $(id); if (!e) return; e.textContent = text; if (cls !== undefined) e.className = cls; }
+  function fmt(v, d, unit) { return (v === null || v === undefined || isNaN(v)) ? "–" : Number(v).toFixed(d) + (unit || ""); }
+  function mb(kb) { return kb ? (kb / 1024 >= 1024 ? (kb / 1048576).toFixed(2) + " GB" : Math.round(kb / 1024) + " MB") : "–"; }
+  function dur(s) {
+    if (s === null || s === undefined) return "–";
+    var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    return d ? d + " d " + h + " h" : h ? h + " h " + m + " min" : m + " min";
+  }
+  function clock(t) { var d = new Date(t); return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+
+  /* legend + bar segments built once */
+  var bar = $("bar"), legend = $("legend"), segs = {};
+  STAGES.forEach(function (s) {
+    var seg = document.createElement("div");
+    seg.className = "seg"; seg.style.background = "var(" + s[2] + ")"; seg.style.flexBasis = "0%";
+    bar.insertBefore(seg, $("over")); segs[s[0]] = seg;
+    var l = document.createElement("div"); l.className = "leg";
+    l.innerHTML = '<i></i><strong></strong><em></em>';
+    l.querySelector("i").style.background = "var(" + s[2] + ")";
+    l.querySelector("strong").textContent = s[1];
+    l.querySelector("em").textContent = s[3];
+    l.id = "leg-" + s[0];
+    legend.appendChild(l);
+  });
+
+  function renderBudget(m) {
+    var target = m.device.targetFps || 10, budget = 1000 / target, p = m.pipeline;
+    set("fps", fmt(p.fps, 1));
+    set("fpsTarget", "fps of " + fmt(target, 0) + " target");
+    var used = 0, stages = {};
+    (p.stages || []).forEach(function (s) { stages[s.name] = s; used += s.perFrameMs || 0; });
+    var scaleMax = Math.max(budget, used);
+    STAGES.forEach(function (s) {
+      var st = stages[s[0]] || {}, ms = st.perFrameMs || 0, pct = 100 * ms / scaleMax;
+      segs[s[0]].style.flexBasis = pct + "%";
+      segs[s[0]].textContent = pct > 7 ? fmt(ms, ms < 10 ? 1 : 0) + " ms" : "";
+      segs[s[0]].title = s[1] + ": " + fmt(ms, 1) + " ms per frame";
+      var em = document.querySelector("#leg-" + s[0] + " em");
+      var calls = (s[0] === "align" || s[0] === "embed" || s[0] === "match") ? " per face" : "";
+      em.textContent = fmt(ms, 1) + " ms per frame (" + fmt(st.avgMs, 1) + " ms" + calls + ", worst " + fmt(st.maxMs, 0) + " ms)";
+    });
+    $("over").hidden = used <= budget;
+    set("scaleMid", fmt(scaleMax / 2, 0) + " ms");
+    set("scaleEnd", fmt(scaleMax, 0) + " ms");
+    var headroom = budget - used;
+    set("budgetNote", used <= 0 ? "Waiting for frames…" :
+      headroom >= 0 ? "Frames use " + fmt(used, 0) + " of the " + fmt(budget, 0) + " ms each frame can take at " + fmt(target, 0) + " fps, leaving " + fmt(headroom, 0) + " ms spare (the hatched part is time spent waiting for the next frame)."
+                    : "Frames need " + fmt(used, 0) + " ms but only " + fmt(budget, 0) + " ms is available at " + fmt(target, 0) + " fps, so the camera runs slower than its target.");
+  }
+
+  function line(svg, series, color, max, n, dash) {
+    var w = svg.clientWidth || 400, h = 110, pts = [];
+    series.forEach(function (v, i) {
+      if (v === null || v === undefined) return;
+      var x = n <= 1 ? 0 : i * w / (n - 1), y = h - Math.min(v, max) / max * h;
+      pts.push(x.toFixed(1) + "," + y.toFixed(1));
+    });
+    if (!pts.length) return "";
+    return '<polyline fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round" ' +
+      (dash ? 'stroke-dasharray="5 4" ' : '') + 'points="' + pts.join(" ") + '"/>';
+  }
+  function chart(svg, defs, max, unit) {
+    var w = svg.clientWidth || 400, h = 110, n = defs[0].data.length, out = "";
+    [0, 0.5, 1].forEach(function (f) {
+      var y = (h - f * h).toFixed(1);
+      out += '<line class="axis" x1="0" x2="' + w + '" y1="' + y + '" y2="' + y + '"/>';
+      out += '<text class="axis-label" x="' + (w - 2) + '" y="' + (Number(y) - 3) + '" text-anchor="end">' + Math.round(f * max) + unit + '</text>';
+    });
+    if (n < 2) out += '<text class="axis-label" x="0" y="60">Collecting history (a point every 5 s)…</text>';
+    else defs.forEach(function (d) { out += line(svg, d.data, d.color, max, n, d.dash); });
+    svg.setAttribute("viewBox", "0 0 " + w + " 124");
+    svg.innerHTML = out + '<text class="axis-label" x="0" y="124">10 min ago</text><text class="axis-label" x="' + w + '" y="124" text-anchor="end">now</text>';
+  }
+  function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+
+  function big(n) { return n === null || n === undefined ? "–" : Number(n).toLocaleString("en-US"); }
+  function roughly(n) {
+    if (!n) return "–";
+    var p = Math.pow(10, Math.max(0, Math.floor(Math.log10(n)) - 1));      /* two significant digits */
+    return big(Math.floor(n / p) * p);
+  }
+  function bytes(b) { return !b ? "0 KB" : b < 1048576 ? (b / 1024).toFixed(1) + " KB" : (b / 1048576).toFixed(1) + " MB"; }
+  function renderCapacity(m) {
+    var c = m.capacity, g = (m.recognition || {}).gallery || {}, people = g.total || 0;
+    if (!c) return;
+    set("galMem", bytes(c.galleryRamBytes));
+    if (!c.estimate) { set("capHead", "Not enough readings yet"); return; }
+    var why = { "memory": "memory", "storage": "app storage", "matching speed": "matching speed" }[c.limitedBy] || c.limitedBy;
+    set("capHead", "About " + roughly(c.estimate) + " people, limited by " + why + ".");
+    set("capSub", "This camera holds " + big(people) + (people === 1 ? " person" : " people") + " now. " +
+      (c.nsPerEntry ? "Comparing a face with one person takes " + fmt(c.nsPerEntry, 0) + " ns here, so at the estimate each face takes about " +
+      fmt(c.matchMsAtEstimate, 1) + " ms to match." : ""));
+    var a = c.assumptions || {};
+    var defs = {
+      memory: [c.byMemory, "Free memory after keeping " + (a.ramReserveMb || "?") + " MB in reserve, at about " + bytes(a.ramBytesPerPerson) + " per person."],
+      storage: [c.byStorage, "Free app storage after keeping " + (a.storageReserveMb || "?") + " MB in reserve, at about " + bytes(a.storageBytesPerPerson) + " per person once Pharos sync stores face crops."],
+      matching: [c.byMatching, "Keeping matching under " + fmt(a.matchBudgetMs, 0) + " ms per face, measured on this chip at start-up."]
+    };
+    Object.keys(defs).forEach(function (k) {
+      var el = $("lim-" + k), lim = defs[k][0];
+      el.className = "limit" + (c.limitedBy === (k === "matching" ? "matching speed" : k) ? " binding" : "");
+      el.querySelector("h3 span").textContent = lim ? roughly(lim) : "unknown";
+      el.querySelector(".track b").style.width = lim ? Math.min(100, Math.max(0.5, 100 * people / lim)) + "%" : "0";
+      el.querySelector(".track").title = big(people) + " of about " + big(lim) + " used";
+      el.querySelector("p").textContent = defs[k][1];
+    });
+    set("capFine", "Estimates assume one enrolment photo per person. Bars show how much of each limit is in use now.");
+  }
+
+  function render(m) {
+    var d = m.device, s = m.system, r = m.recognition, ph = m.pharos, t = m.totals, p = m.pipeline;
+    set("ident", [d.model, d.serial, d.chip + (d.accelerator ? " (" + d.accelerator + ")" : "")].filter(Boolean).join(", "));
+    renderBudget(m);
+    renderCapacity(m);
+    set("cpu", fmt(s.cpuPct, 0, " %") + (s.cores ? ", " + s.cores + " core" + (s.cores > 1 ? "s" : "") : ""), s.cpuPct > 90 ? "bad" : s.cpuPct > 75 ? "warn" : "");
+    $("cpuMeter").style.width = (s.cpuPct || 0) + "%";
+    set("load", fmt(s.load1, 2) + " / " + fmt(s.load5, 2));
+    var memUsed = s.memTotalKb ? s.memTotalKb - s.memAvailableKb : 0, memPct = s.memTotalKb ? 100 * memUsed / s.memTotalKb : null;
+    set("mem", s.memTotalKb ? mb(memUsed) + " of " + mb(s.memTotalKb) : "–", memPct > 90 ? "bad" : memPct > 80 ? "warn" : "");
+    $("memMeter").style.width = (memPct || 0) + "%";
+    set("rss", mb(s.appRssKb));
+    set("temp", fmt(s.tempC, 0, " °C"), s.tempC > 85 ? "bad" : s.tempC > 75 ? "warn" : "");
+    set("storage", s.storageTotalKb ? mb(s.storageFreeKb) + " of " + mb(s.storageTotalKb) : "–");
+    set("detPm", fmt(p.facesDetectedPerMin, 0)); set("embPm", fmt(p.facesEmbeddedPerMin, 0)); set("matchPm", fmt(p.matchesPerMin, 0));
+    set("matchTotal", fmt(t.matches, 0)); set("threatTotal", fmt(t.threats, 0), t.threats ? "bad" : "");
+    set("thr", fmt(r.threshold, 2)); set("minFace", fmt(r.minEyePx, 0, " px between the eyes"));
+    var g = r.gallery || {};
+    set("people", fmt(g.total, 0)); set("peopleSplit", fmt(g.allow, 0) + " / " + fmt(g.threat, 0)); set("source", g.source || "–");
+    set("pharosState", ph.state + (ph.detail ? ": " + ph.detail : ""));
+    set("rev", ph.configRevision ? String(ph.configRevision) : "–");
+    set("mode", r.mode || "–");
+    var pill = $("pharos"), st = ph.state || "";
+    pill.className = "pill " + (st === "Connected" ? "ok" : /Not commissioned|Connecting/.test(st) ? "wait" : "bad");
+    set("pharosText", "Pharos: " + st); pill.title = ph.detail || "";
+
+    var h = m.history || [];
+    var target = d.targetFps || 10;
+    chart($("chartFps"), [
+      { data: h.map(function (x) { return x.fps; }), color: css("--s-capture") },
+      { data: h.map(function () { return target; }), color: css("--signal"), dash: true }
+    ], Math.max(target * 1.25, 1), "");
+    chart($("chartSys"), [
+      { data: h.map(function (x) { return x.cpu; }), color: css("--s-detect") },
+      { data: h.map(function (x) { return x.mem; }), color: css("--s-embed") }
+    ], 100, " %");
+
+    var tb = $("recent"); tb.textContent = "";
+    (m.recentMatches || []).forEach(function (x) {
+      var tr = document.createElement("tr");
+      [clock(x.t), x.name].forEach(function (v) { var td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+      var tdc = document.createElement("td"), c = document.createElement("span");
+      c.className = "cat " + x.category; c.textContent = x.category === "threat" ? "Threat" : "Allowed"; tdc.appendChild(c); tr.appendChild(tdc);
+      var tds = document.createElement("td"); tds.className = "num"; tds.textContent = fmt(x.score, 2); tr.appendChild(tds);
+      tb.appendChild(tr);
+    });
+    $("recentEmpty").hidden = (m.recentMatches || []).length > 0;
+    $("foot").textContent = "";
+    ["AURIX " + d.app, "Firmware " + (d.firmware || "–"), "Model " + (d.modelVersion || "–"),
+     "Analysing " + (d.frame ? d.frame[0] + "×" + d.frame[1] : "–"), "App running " + dur(d.appUptimeS), "Camera up " + dur(s.uptimeS)]
+      .forEach(function (x) { var sp = document.createElement("span"); sp.textContent = x; $("foot").appendChild(sp); });
+  }
+
+  /* ---- simulated readings, for previews away from the camera ---- */
+  function simulate() {
+    var now = Date.now();
+    if (!demoState) {
+      demoState = { start: now - 3 * 3600e3, hist: [], recent: [], totals: { frames: 104000, facesDetected: 5200, facesChecked: 3100, facesEmbedded: 3100, matches: 412, threats: 3, unknown: 2688 } };
+      for (var i = 0; i < 119; i++) demoState.hist.push(sample(now - (119 - i) * 5000, i));
+      [["Dana Ruiz", "allow", 0.71], ["Marco Ilic", "allow", 0.58], ["Watchlist Test", "threat", 0.66], ["Priya Shah", "allow", 0.63]]
+        .forEach(function (x, k) { demoState.recent.push({ t: now - (k + 1) * 83000, name: x[0], category: x[1], score: x[2] }); });
+    }
+    function sample(t, i) {
+      var faces = 0.5 + 0.5 * Math.sin(i / 9);
+      return { t: t, fps: 9.6 - faces * 0.5 + Math.random() * 0.3, cpu: 38 + faces * 22 + Math.random() * 6, mem: 61 + Math.random() * 2, temp: 54, frameMs: 70 };
+    }
+    demoState.hist.push(sample(now, demoState.hist.length)); if (demoState.hist.length > 120) demoState.hist.shift();
+    var last = demoState.hist[demoState.hist.length - 1], faces = 1.2;
+    demoState.totals.matches += Math.random() < 0.3 ? 1 : 0;
+    return {
+      time: now,
+      device: { app: "0.5.0", chip: "ARTPEC-8", accelerator: "DLPU", embedKind: "dlpu", modelVersion: "mobilefacenet-128-int8-dlpu",
+        model: "AXIS P3267-LV", serial: "B8A44FD5707E", firmware: "12.11.118", targetFps: 10, appUptimeS: (now - demoState.start) / 1000, frame: [1920, 1080] },
+      pipeline: { fps: last.fps, windowFrames: 48, facesDetectedPerMin: 74, facesEmbeddedPerMin: 41, matchesPerMin: 6,
+        stages: [
+          { name: "capture", avgMs: 45.6 + Math.random(), maxMs: 52, perFrameMs: 45.6 },
+          { name: "detect", avgMs: 54.7 + Math.random(), maxMs: 61, perFrameMs: 54.7 },
+          { name: "align", avgMs: 2.5, maxMs: 4, perFrameMs: 2.5 * faces },
+          { name: "embed", avgMs: 9.9, maxMs: 12, perFrameMs: 9.9 * faces },
+          { name: "match", avgMs: 0.02, maxMs: 0.1, perFrameMs: 0.02 * faces }] },
+      totals: demoState.totals,
+      system: { cpuPct: last.cpu, cores: 4, load1: 1.62, load5: 1.48, memTotalKb: 1009152, memAvailableKb: 1009152 * (1 - last.mem / 100),
+        appRssKb: 88400, tempC: 54, uptimeS: 9 * 86400 + 4000, storageFreeKb: 402000, storageTotalKb: 1048576 },
+      recognition: { threshold: 0.45, minEyePx: 40, mode: "watchlist", gallery: { total: 412, allow: 409, threat: 3, source: "Pharos" } },
+      pharos: { state: "Connected", detail: "", configRevision: 42, sinceMs: now - 3600e3 },
+      capacity: { estimate: 47168, limitedBy: "storage", byMemory: 912000, byStorage: 47168, byMatching: 196078, nsPerEntry: 25.5,
+        matchMsAtEstimate: 1.2, galleryRamBytes: 412 * 197, benchEntries: 4096,
+        assumptions: { ramBytesPerPerson: 1024, storageBytesPerPerson: 8192, ramReserveMb: 96, storageReserveMb: 32, matchBudgetMs: 5 } },
+      history: demoState.hist, recentMatches: demoState.recent
+    };
+  }
+
+  function tick() {
+    if (paused) return;
+    if (demo) { render(simulate()); lastOk = Date.now(); return; }
+    fetch("aurix.cgi?data", { cache: "no-store", credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (m) { failures = 0; lastOk = Date.now(); $("stale").hidden = true; render(m); })
+      .catch(function () {
+        failures++;
+        if (!lastOk && failures >= 2) { demo = true; $("demo").hidden = false; tick(); return; }
+        if (lastOk) $("stale").hidden = false;
+      });
+  }
+  setInterval(function () {
+    if (lastOk) { var s = Math.round((Date.now() - lastOk) / 1000); set("updated", paused ? "Paused" : s < 3 ? "Live" : "Updated " + s + " s ago"); }
+  }, 1000);
+  $("pause").addEventListener("click", function () {
+    paused = !paused; this.textContent = paused ? "Resume" : "Pause"; this.setAttribute("aria-pressed", String(paused));
+    if (!paused) tick();
+  });
+  window.addEventListener("resize", function () { /* charts reflow on next tick */ });
+  tick();
+  setInterval(tick, 2000);
+})();
+</script>
+</body>
+</html>

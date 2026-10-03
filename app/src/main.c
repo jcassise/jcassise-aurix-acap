@@ -19,6 +19,8 @@
 #include "match.h"
 #include "overlay.h"
 #include "pharos.h"
+#include "metrics.h"
+#include "web.h"
 
 #define APP_NAME "aurix"
 #define MATCH_LOG_INTERVAL_S 5.0
@@ -96,6 +98,13 @@ static void rebuild_gallery(app_ctx *a, const char *param_value)
 
     syslog(LOG_INFO, "gallery: %u identities (%u from file, %d from settings, kind %s)",
            g.count, from_file, from_param, a->cfg.embed_kind);
+    {
+        int threats = 0;
+        for (uint32_t i = 0; i < g.count; i++) threats += g.category[i] == AURIX_CAT_THREAT;
+        metrics_gallery((int)g.count, (int)g.count - threats, threats,
+                        from_file && from_param ? "Settings and gallery file" : from_file ? "Gallery file"
+                        : from_param ? "Settings" : "Nobody enrolled", gallery_bytes(&g));
+    }
     for (uint32_t i = 0; i < g.count; i++)
         syslog(LOG_INFO, "  %s [%s]", g.ids[i], g.category[i] == AURIX_CAT_THREAT ? "threat" : "allow");
 }
@@ -116,7 +125,9 @@ static void on_param(const gchar *name, const gchar *value, gpointer data)
             return;
         }
         a->threshold = (v < 0 ? 0 : v > 100 ? 100 : v) / 100.0f;
+        float me = a->min_eye_px;
         g_mutex_unlock(&a->gal_lock);
+        metrics_recognition((v < 0 ? 0 : v > 100 ? 100 : v) / 100.0, me, "local settings");
         syslog(LOG_INFO, "match threshold now %.2f", (v < 0 ? 0 : v > 100 ? 100 : v) / 100.0);
     } else if (g_str_has_suffix(name, ".PharosUrl") || g_str_has_suffix(name, ".PharosDeviceId") ||
                g_str_has_suffix(name, ".PharosToken") || g_str_has_suffix(name, ".PharosServerCert")) {
@@ -145,9 +156,11 @@ static char *param_get(AXParameter *p, const char *name)
 
 /* ---------------- Pharos integration ---------------- */
 
-static void pharos_apply(const pc_config *c, void *user)
+static void pharos_apply(const pc_config *c, long long rev, void *user)
 {
     app_ctx *a = user;
+    metrics_recognition(c->match_threshold, c->min_face_px / 2.25, pc_mode_name(c->mode));
+    metrics_pharos(NULL, NULL, rev);
     g_mutex_lock(&a->gal_lock);
     a->pharos_managed = TRUE;
     a->threshold = (float)c->match_threshold;
@@ -190,6 +203,7 @@ static void pharos_state_cb(pharos_state st, const char *detail, void *user)
     m->a = a;
     snprintf(m->text, sizeof m->text, "%s%s%s", pharos_state_name(st), detail && *detail ? ": " : "",
              detail ? detail : "");
+    metrics_pharos(pharos_state_name(st), detail, -1);
     g_idle_add(publish_status_idle, m);      /* ax_parameter_* must run on the main loop */
 }
 
@@ -291,6 +305,12 @@ static gpointer worker(gpointer data)
         double t2 = now_s();
         acc(&t_cap, (t1 - t0) * 1e3);
         acc(&t_det, (t2 - t1) * 1e3);
+        metrics_frame();
+        double cap_wait, cap_conv;
+        capture_last_timing(a->cap, &cap_wait, &cap_conv);
+        metrics_stage_time(ST_CAPTURE, cap_conv);      /* waiting for the camera counts as idle */
+        metrics_stage_time(ST_DETECT, (t2 - t1) * 1e3);
+        int f_gated = 0, f_emb = 0;
         if (n < 0) n = 0;
         faces_detected += (unsigned)n;
         g_mutex_lock(&a->gal_lock);
@@ -316,6 +336,7 @@ static gpointer worker(gpointer data)
             }
             if (landmarks_eye_distance(&faces[i].lm) < min_eye) continue;
             faces_gated++;
+            f_gated++;
             if (!a->emb || embedded_this_frame >= cfg->max_embed_per_frame) continue;
             embedded_this_frame++;
 
@@ -326,15 +347,20 @@ static gpointer worker(gpointer data)
             double a2 = now_s();
             acc(&t_align, (a1 - a0) * 1e3);
             acc(&t_emb, (a2 - a1) * 1e3);
+            metrics_stage_time(ST_ALIGN, (a1 - a0) * 1e3);
+            metrics_stage_time(ST_EMBED, (a2 - a1) * 1e3);
             if (dim <= 0) continue;
             faces_embedded++;
+            f_emb++;
 
             g_mutex_lock(&a->gal_lock);
             float score = -1.0f;
             int idx = (a->gallery.count && (uint32_t)dim == a->gallery.dim) ? gallery_best(&a->gallery, q, &score) : -1;
             acc(&t_match, (now_s() - a2) * 1e3);
+            metrics_stage_time(ST_MATCH, (now_s() - a2) * 1e3);
             int hit = idx >= 0 && score >= a->threshold;
             int threat = hit && a->gallery.category[idx] == AURIX_CAT_THREAT;
+            if (a->gallery.count) metrics_match(hit ? a->gallery.ids[idx] : NULL, threat, score, hit);
             if (bx) {
                 bx->state = hit ? (threat ? OV_THREAT : OV_ALLOW) : OV_UNKNOWN;
                 if (hit)
@@ -363,6 +389,7 @@ static gpointer worker(gpointer data)
             g_mutex_unlock(&a->gal_lock);
         }
 
+        metrics_faces(n, f_gated, f_emb);
         g_mutex_lock(&a->gal_lock);
         gboolean show = a->overlay_on;
         g_mutex_unlock(&a->gal_lock);
@@ -384,6 +411,13 @@ static gboolean on_signal(gpointer data)
     g_atomic_int_set(&a->running, 0);
     g_main_loop_quit(a->loop);
     return G_SOURCE_REMOVE;
+}
+
+static gboolean metrics_tick(gpointer unused)
+{
+    (void)unused;
+    metrics_sample(5.0, AURIX_APP_DIR "/localdata");
+    return G_SOURCE_CONTINUE;
 }
 
 int main(void)
@@ -430,6 +464,39 @@ int main(void)
             }
     }
 
+    {
+        char model[64], serial[64], fw[64];
+        static char model_s[64], serial_s[64], fw_s[64], mv[128];
+        read_param(a.params, "Brand.ProdNbr", model, sizeof model);
+        read_param(a.params, "Properties.System.SerialNumber", serial, sizeof serial);
+        read_param(a.params, "Properties.Firmware.Version", fw, sizeof fw);
+        snprintf(model_s, sizeof model_s, "%s%s", model[0] ? "AXIS " : "", model);
+        snprintf(serial_s, sizeof serial_s, "%s", serial);
+        snprintf(fw_s, sizeof fw_s, "%s", fw);
+        snprintf(mv, sizeof mv, "mobilefacenet-128-int8-%s", a.cfg.embed_kind);
+        metrics_identity id = {
+            .app_version = AURIX_VERSION,
+#if defined(__aarch64__)
+            .chip = "ARTPEC-8", .device = "DLPU",
+#else
+            .chip = "ARTPEC-7", .device = "CPU",
+#endif
+            .embed_kind = a.cfg.embed_kind, .model_version = mv, .hw_model = model_s, .serial = serial_s,
+            .firmware = fw_s, .target_fps = a.cfg.fps, .frame_w = (int)a.cfg.width, .frame_h = (int)a.cfg.height,
+        };
+        metrics_init(&id);
+        metrics_recognition(a.threshold, a.min_eye_px, "local settings");
+        metrics_sample(5.0, AURIX_APP_DIR "/localdata");    /* prime CPU counters */
+        {
+            /* matching cost on this chip: compare one face with 4096 synthetic entries, 25 times */
+            double ns = gallery_benchmark_ns_per_entry(a.emb ? (uint32_t)embedder_dim(a.emb) : 128, 4096, 25);
+            metrics_match_cost(ns, 4096);
+            syslog(LOG_INFO, "matching benchmark: %.1f ns per gallery entry (%.2f ms per face per 10,000 people)",
+                   ns, ns * 10000 / 1e6);
+        }
+        g_timeout_add_seconds(5, metrics_tick, NULL);
+        web_start(AURIX_APP_DIR "/web/dashboard.html");
+    }
     if (a.params) pharos_restart_thread(&a);          /* initial start (synchronous, no client yet) */
 
     /* fontconfig (used by cairo text) needs a writable cache dir */

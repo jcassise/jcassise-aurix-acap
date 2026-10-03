@@ -1,0 +1,1 @@
+{ "name": "aurix-dashboard-tests", "private": true, "devDependencies": { "jsdom": "^24.0.0" } }

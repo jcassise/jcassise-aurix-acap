@@ -18,7 +18,7 @@ RUN cp manifest.json.${ARCH} manifest.json && \
         [ -f models/embed_$KIND.$ext ] && cp models/embed_$KIND.$ext models/embed.$ext; \
     done; \
     EXTRA="" && \
-    for f in models/detect.tflite models/detect.meta models/embed.tflite models/embed.meta; do \
+    for f in models/detect.tflite models/detect.meta models/embed.tflite models/embed.meta web/dashboard.html; do \
         [ -f "$f" ] && EXTRA="$EXTRA -a $f"; \
     done; \
     echo "bundling:$EXTRA" && acap-build ./ $EXTRA

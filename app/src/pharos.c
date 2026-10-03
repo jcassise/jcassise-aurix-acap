@@ -334,7 +334,7 @@ static void apply_config(pharos *p, long long rev, json_t *desired)
             json_array_foreach(u, i, k) syslog(LOG_DEBUG, "pharos: unsupported config key %s", json_string_value(k));
         }
         p->config_rev = rev;
-        if (p->h.apply_config) p->h.apply_config(&p->cfg, p->h.user);
+        if (p->h.apply_config) p->h.apply_config(&p->cfg, p->config_rev, p->h.user);
         persist(p, desired);
     }
 }
@@ -477,7 +477,7 @@ pharos *pharos_start(const pharos_settings *s, const pharos_hooks *h)
     load_commands(p);
     p->status_interval_ms = 2000;
     srand((unsigned)now_ms());
-    if (h->apply_config) h->apply_config(&p->cfg, h->user);
+    if (h->apply_config) h->apply_config(&p->cfg, p->config_rev, h->user);
     if (!s->url[0] || !s->device_id[0] || !s->token[0]) {
         set_state(p, PS_DISABLED, NULL);
         return p;                       /* not commissioned: no thread */

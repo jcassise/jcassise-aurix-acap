@@ -43,4 +43,10 @@ int32_t dot_s8(const int8_t *a, const int8_t *b, uint32_t dim);
 /* Best cosine match. Returns index or -1 (empty gallery / zero query). */
 int gallery_best(const aurix_gallery *g, const int8_t *q, float *score);
 
+/* Bytes held in RAM by the gallery's arrays (allocated capacity). */
+unsigned long gallery_bytes(const aurix_gallery *g);
+
+/* Measures the cost of comparing one face against one entry (ns), using a synthetic gallery. */
+double gallery_benchmark_ns_per_entry(uint32_t dim, uint32_t entries, int rounds);
+
 #endif

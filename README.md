@@ -36,6 +36,11 @@ app/src/main.c         GLib main loop (overlay, settings) + pipeline worker thre
 app/src/overlay.*      live-view boxes: green allow, red threat, blue unknown, grey too small
 app/src/pharos*.{c,h}  AURIX–Pharos protocol v1 client: HTTPS + pinning, /hello, status loop,
                        config read-back, once-only commands, §8 errors/backoff
+app/src/metrics.*      live performance metrics (per-stage time, faces, matches, history)
+app/src/capacity.*     people-capacity estimate (memory, storage, matching speed)
+app/src/sysinfo.*      CPU, memory, temperature, storage from /proc and /sys
+app/src/web.*          dashboard over the camera's web server (FastCGI, aurix.cgi)
+app/web/dashboard.html on-camera dashboard page (self-contained, no internet needed)
 contract/              vendored AURIX–Pharos contract (OpenAPI, schemas, examples) - owner: Pharos
 tests/pharos/          protocol scenarios: real client vs a contract-validating stand-in server
 app/models/            put detect.tflite / embed.tflite here (not committed)
@@ -68,6 +73,25 @@ make -C tests run
 
 Changes apply immediately (no restart). `localdata/gallery.bin` is still read and merged if present.
 Use `dlpu` entries on ARTPEC-8 and `cpu` entries on ARTPEC-7; others are ignored.
+
+## Performance dashboard
+
+Camera web UI → **Apps → aurix → Open** (or `https://<camera>/local/aurix/aurix.cgi`;
+admin login). Refreshes every 2 s:
+
+- **Frame budget**: where each frame's milliseconds go (prepare, detect, align, identify,
+  match) against the target frame rate; time spent waiting for the next camera frame is
+  shown as spare.
+- Processor, load, memory (system and AURIX), temperature, app storage.
+- Faces seen / identified / matched per minute and since start; threshold and minimum face.
+- People on the camera (allowed / threat, source), Pharos connection and config revision.
+- 10-minute charts (frame rate, processor, memory) and the last 20 matches.
+- **Capacity**: how many people the camera can hold, and what limits it - free memory
+  (~1 KB per person, 96 MB reserve), free app storage (~8 KB per person once Pharos sync
+  caches face crops, 32 MB reserve) and matching speed (5 ms per face budget, measured on the
+  chip by a start-up benchmark logged as `matching benchmark: … ns per gallery entry`).
+
+Raw JSON: `aurix.cgi?data` - usable for logging benchmarks from a script.
 
 ## Connecting to Pharos (protocol v1, step 1)
 

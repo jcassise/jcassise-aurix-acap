@@ -8,6 +8,8 @@
 #include "yunet.h"
 #include "tensor.h"
 #include "embed_meta.h"
+#include "sysinfo.h"
+#include "capacity.h"
 
 #ifndef FIXTURES
 #define FIXTURES "fixtures"
@@ -261,6 +263,40 @@ static void test_gallery_v2_file(void)
     remove(path);
 }
 
+static void test_sysinfo_parsers(void)
+{
+    uint64_t tot = 0, av = 0;
+    CHECK(sysinfo_parse_meminfo("MemTotal:        1009152 kB\nMemFree:  100 kB\nMemAvailable:     612340 kB\n", &tot, &av) == 0
+          && tot == 1009152 && av == 612340, "meminfo %llu %llu", (unsigned long long)tot, (unsigned long long)av);
+    CHECK(sysinfo_parse_meminfo("MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 50 kB\nCached: 250 kB\n", &tot, &av) == 0
+          && av == 400, "meminfo fallback %llu", (unsigned long long)av);
+    cpu_counters c;
+    int cores = 0;
+    CHECK(sysinfo_parse_stat("cpu  100 0 50 800 50 0 0 0\ncpu0 50 0 25 400 25 0 0 0\ncpu1 50 0 25 400 25 0 0 0\nintr 1\n",
+                             &c, &cores) == 0 && cores == 2 && c.total == 1000 && c.idle == 850,
+          "stat cores %d total %llu idle %llu", cores, c.total, c.idle);
+}
+
+static void test_capacity(void)
+{
+    /* 512 MB free RAM, 400 MB free storage, 25 ns per comparison */
+    cap_result r = capacity_estimate(512u * 1024, 400u * 1024, 25.0);
+    CHECK(r.by_memory == (512u - 96) * 1024u * 1024 / 1024, "by_memory %llu", (unsigned long long)r.by_memory);
+    CHECK(r.by_storage == (400u - 32) * 1024u * 1024 / 8192, "by_storage %llu", (unsigned long long)r.by_storage);
+    CHECK(r.by_matching == 200000, "by_matching %llu", (unsigned long long)r.by_matching);
+    CHECK(r.limited_by == CAP_BY_STORAGE && r.estimate == r.by_storage, "limit %d", r.limited_by);
+    CHECK(fabs(r.match_ms_at_estimate - r.estimate * 25e-6) < 1e-9, "match ms %f", r.match_ms_at_estimate);
+    /* slow chip: matching binds */
+    r = capacity_estimate(512u * 1024, 4000u * 1024, 2000.0);
+    CHECK(r.limited_by == CAP_BY_MATCHING && r.estimate == 2500, "slow chip %d %llu", r.limited_by, (unsigned long long)r.estimate);
+    /* unknown benchmark and tiny memory */
+    r = capacity_estimate(50u * 1024, 0, 0);
+    CHECK(r.limited_by == CAP_UNKNOWN && r.estimate == 0, "unknown %d", r.limited_by);
+    double ns = gallery_benchmark_ns_per_entry(128, 2048, 5);
+    CHECK(ns > 0 && ns < 100000, "benchmark %f ns", ns);
+    printf("info: matching benchmark here %.1f ns per entry\n", ns);
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -273,6 +309,8 @@ int main(void)
     test_embed_meta();
     test_gallery_param();
     test_gallery_v2_file();
+    test_sysinfo_parsers();
+    test_capacity();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

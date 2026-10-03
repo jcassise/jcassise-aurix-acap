@@ -39,7 +39,7 @@ typedef struct {
 } pharos_snapshot;
 
 typedef struct {
-    void (*apply_config)(const pc_config *cfg, void *user);           /* new effective config */
+    void (*apply_config)(const pc_config *cfg, long long revision, void *user);           /* new effective config */
     void (*snapshot)(pharos_snapshot *out, void *user);               /* fill current state */
     void (*state_changed)(pharos_state s, const char *detail, void *user);
     /* Execute a command; return "done" | "failed" | "unsupported" and optionally a detail. */
