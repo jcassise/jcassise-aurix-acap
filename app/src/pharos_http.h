@@ -52,6 +52,9 @@ ph_response ph_request(ph_client *c, const char *method, const char *path,
                        const void *body, size_t body_len, const char *ctype, long timeout_s);
 void ph_response_free(ph_response *r);
 
+/* Negotiated TLS version and cipher of the last connection, e.g. "TLSv1.3, TLS_AES_256_GCM_SHA384". */
+int ph_client_tls_info(ph_client *c, char *out, size_t n);
+
 /* Checks a commissioning certificate setting without connecting. 0 = usable. */
 int ph_trust_validate(const char *trust, char *why, size_t why_len);
 

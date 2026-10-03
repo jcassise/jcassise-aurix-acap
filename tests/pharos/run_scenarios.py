@@ -97,6 +97,34 @@ out, _ = run(sim, 1.5, trust=other.cert["pubkey_pem"])
 check("S2i wrong public key refused, no HTTP sent", "TLS pin mismatch" in out and not sim.log, out[-200:])
 sim.stop()
 
+# T1 TLS 1.3-only server (as the Pharos dev unit is configured) and T2 TLS 1.2-only server
+import ssl as _ssl
+sim = Sim(tempfile.mkdtemp(), tls_min=_ssl.TLSVersion.TLSv1_3).start()
+out, _ = run(sim, 1.5)
+check("T1 TLS 1.3-only server connects", "STATE Connected" in out, out[-300:])
+sim.stop()
+sim = Sim(tempfile.mkdtemp(), tls_max=_ssl.TLSVersion.TLSv1_2).start()
+out, _ = run(sim, 1.5)
+check("T2 TLS 1.2-only server connects", "STATE Connected" in out, out[-300:])
+sim.stop()
+# T3 the failure detail reaches the status text (plain HTTP on the port -> SSL error with reason)
+import socket, threading as _th
+srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(5); port = srv.getsockname()[1]
+def _plain():
+    while True:
+        try:
+            c, _a = srv.accept(); c.recv(1024); c.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"); c.close()
+        except OSError:
+            return
+_th.Thread(target=_plain, daemon=True).start()
+class _P: pass
+fake = _P(); fake.url = f"https://127.0.0.1:{port}"; fake.device_id = "aurix-test-01"; fake.token = "t"
+fake.cert = {"spki_pin": "sha256//" + "A" * 43 + "="}
+out, _ = run(fake, 1.5)
+srv.close()
+detail = [l for l in out.splitlines() if l.startswith("STATE Pharos unreachable")]
+check("T3 TLS failure reason is reported in detail", any(":" in l.split("|", 1)[1] and len(l.split("|", 1)[1]) > len("SSL connect error") for l in detail), str(detail[:1]))
+
 # S2f PEM pasted into a one-line field (newlines lost) still works
 sim = fresh()
 out, _ = run(sim, 1.5, trust=" ".join(sim.cert["pem"].split()))

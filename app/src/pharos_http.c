@@ -20,6 +20,7 @@ struct ph_client {
     int n_fp;
     int prepared;
     CURL *curl;               /* reused: keeps the TLS connection alive between status posts */
+    char tls[128];            /* "TLSv1.3 / TLS_AES_256_GCM_SHA384" from the last handshake */
 };
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
@@ -298,9 +299,11 @@ ph_err ph_client_prepare(ph_client *c, char *why, size_t wl)
     curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
+    char ebuf[CURL_ERROR_SIZE] = "";
+    curl_easy_setopt(h, CURLOPT_ERRORBUFFER, ebuf);
     CURLcode rc = curl_easy_perform(h);
     if (rc != CURLE_OK) {
-        set_err(why, wl, curl_easy_strerror(rc));
+        if (why && wl) snprintf(why, wl, "%s%s%s", curl_easy_strerror(rc), ebuf[0] ? ": " : "", ebuf);
         curl_easy_cleanup(h);
         return PH_ERR_NETWORK;
     }
@@ -334,6 +337,21 @@ ph_err ph_client_prepare(ph_client *c, char *why, size_t wl)
     }
     curl_easy_cleanup(h);
     return res;
+}
+
+static int on_debug(CURL *h, curl_infotype type, char *data, size_t size, void *user)
+{
+    (void)h;
+    ph_client *c = user;
+    static const char tag[] = "SSL connection using ";
+    if (type == CURLINFO_TEXT && size > sizeof tag && !strncmp(data, tag, sizeof tag - 1)) {
+        size_t n = size - (sizeof tag - 1);
+        while (n && (data[sizeof tag - 1 + n - 1] == '\n' || data[sizeof tag - 1 + n - 1] == '\r')) n--;
+        if (n >= sizeof c->tls) n = sizeof c->tls - 1;
+        memcpy(c->tls, data + sizeof tag - 1, n);
+        c->tls[n] = 0;
+    }
+    return 0;
 }
 
 typedef struct { char *p; size_t n, cap; } buf_t;
@@ -396,6 +414,8 @@ ph_response ph_request(ph_client *c, const char *method, const char *path,
     }
     buf_t b = { 0 };
     hdr_t hd = { -1, 0 };
+    char ebuf[CURL_ERROR_SIZE] = "";
+    curl_easy_setopt(h, CURLOPT_ERRORBUFFER, ebuf);
     curl_easy_setopt(h, CURLOPT_URL, url);
     curl_easy_setopt(h, CURLOPT_HTTPHEADER, hl);
     curl_easy_setopt(h, CURLOPT_CUSTOMREQUEST, method);
@@ -412,6 +432,9 @@ ph_response ph_request(ph_client *c, const char *method, const char *path,
     curl_easy_setopt(h, CURLOPT_TIMEOUT, timeout_s > 0 ? timeout_s : 15L);
     curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 0L);   /* never follow redirects with the token */
+    curl_easy_setopt(h, CURLOPT_DEBUGFUNCTION, on_debug);  /* only reads the handshake summary line */
+    curl_easy_setopt(h, CURLOPT_DEBUGDATA, c);
+    curl_easy_setopt(h, CURLOPT_VERBOSE, 1L);
     apply_tls(c, h);
 
     CURLcode rc = curl_easy_perform(h);
@@ -429,7 +452,8 @@ ph_response ph_request(ph_client *c, const char *method, const char *path,
                  curl_easy_strerror(rc));
     } else if (rc != CURLE_OK) {
         r.err = PH_ERR_NETWORK;
-        snprintf(r.errmsg, sizeof r.errmsg, "%s", curl_easy_strerror(rc));
+        /* e.g. "SSL connect error: ... tlsv1 alert protocol version" - the detail is what diagnoses it */
+        snprintf(r.errmsg, sizeof r.errmsg, "%.48s%s%.190s", curl_easy_strerror(rc), ebuf[0] ? ": " : "", ebuf);
     } else {
         curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &r.status);
     }
@@ -438,6 +462,12 @@ ph_response ph_request(ph_client *c, const char *method, const char *path,
     r.retry_after_s = hd.retry_after;
     r.json = hd.json;
     return r;
+}
+
+int ph_client_tls_info(ph_client *c, char *out, size_t n)
+{
+    snprintf(out, n, "%s", c->tls);
+    return c->tls[0] ? 0 : -1;
 }
 
 void ph_response_free(ph_response *r)

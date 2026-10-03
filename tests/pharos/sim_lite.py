@@ -40,7 +40,8 @@ def make_cert(dirpath, cn="pharos-sim"):
 
 
 class Sim:
-    def __init__(self, workdir, device_id="aurix-test-01", token="tok-123"):
+    def __init__(self, workdir, device_id="aurix-test-01", token="tok-123", tls_min=None, tls_max=None):
+        self.tls_min, self.tls_max = tls_min, tls_max
         self.device_id, self.token = device_id, token
         self.cert = make_cert(workdir)
         self.v = {n: schema(n) for n in ["hello-request", "hello-response", "status-request", "status-response"]}
@@ -129,6 +130,8 @@ class Sim:
         self.port = self.httpd.server_address[1]
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(self.cert["crt"], self.cert["key"])
+        if self.tls_min: ctx.minimum_version = self.tls_min
+        if self.tls_max: ctx.maximum_version = self.tls_max
         self.httpd.socket = ctx.wrap_socket(self.httpd.socket, server_side=True)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.url = f"https://127.0.0.1:{self.port}"

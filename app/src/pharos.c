@@ -284,6 +284,8 @@ static outcome do_hello(pharos *p, int *backoff, long long *wait)
                 syslog(LOG_WARNING, "pharos: camera clock differs from Pharos by %lld ms - check NTP", p->clock_drift_ms);
             int si = (int)json_integer_value(json_object_get(b, "statusIntervalMs"));
             p->status_interval_ms = si >= 500 && si <= 60000 ? si : 2000;
+            char tls[128];
+            if (!ph_client_tls_info(p->http, tls, sizeof tls)) syslog(LOG_INFO, "pharos: connected over %s", tls);
             ph_client_set_endpoint(p->http, json_string_value(json_object_get(json_object_get(b, "endpoints"), "base")));
             set_state(p, PS_CONNECTED, NULL);
         }
