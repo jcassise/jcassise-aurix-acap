@@ -21,6 +21,7 @@
 #include "pharos.h"
 #include "metrics.h"
 #include "web.h"
+#include "commission.h"
 
 #define APP_NAME "aurix"
 #define MATCH_LOG_INTERVAL_S 5.0
@@ -47,6 +48,7 @@ typedef struct {
     pharos *pharos;              /* Pharos client (NULL until commissioned settings are read) */
     GMutex pharos_lock;          /* serialises restarts */
     gboolean pharos_managed;     /* commissioned: Pharos owns threshold / min face size */
+    char pharos_status_text[200];
     char *file_gallery_path;
 } app_ctx;
 
@@ -204,6 +206,9 @@ static void pharos_state_cb(pharos_state st, const char *detail, void *user)
     snprintf(m->text, sizeof m->text, "%s%s%s", pharos_state_name(st), detail && *detail ? ": " : "",
              detail ? detail : "");
     metrics_pharos(pharos_state_name(st), detail, -1);
+    g_mutex_lock(&a->gal_lock);
+    snprintf(a->pharos_status_text, sizeof a->pharos_status_text, "%s", m->text);
+    g_mutex_unlock(&a->gal_lock);
     g_idle_add(publish_status_idle, m);      /* ax_parameter_* must run on the main loop */
 }
 
@@ -233,10 +238,20 @@ static gpointer pharos_restart_thread(gpointer data)
     pharos_stop(a->pharos);
     a->pharos = NULL;
     pharos_settings s = { 0 };
-    read_param(a->params, "PharosUrl", s.url, sizeof s.url);
-    read_param(a->params, "PharosDeviceId", s.device_id, sizeof s.device_id);
-    read_param(a->params, "PharosToken", s.token, sizeof s.token);
-    read_param(a->params, "PharosServerCert", s.trust, sizeof s.trust);
+    commission cm;
+    if (commission_load(AURIX_APP_DIR "/localdata/pharos", &cm) == 0) {
+        /* saved from the AURIX page: wins over the app settings */
+        snprintf(s.url, sizeof s.url, "%s", cm.url);
+        snprintf(s.device_id, sizeof s.device_id, "%s", cm.device_id);
+        snprintf(s.token, sizeof s.token, "%s", cm.token);
+        snprintf(s.trust, sizeof s.trust, "%s", cm.trust);
+    } else {
+        read_param(a->params, "PharosUrl", s.url, sizeof s.url);
+        read_param(a->params, "PharosDeviceId", s.device_id, sizeof s.device_id);
+        read_param(a->params, "PharosToken", s.token, sizeof s.token);
+        read_param(a->params, "PharosServerCert", s.trust, sizeof s.trust);
+    }
+    explicit_bzero(&cm, sizeof cm);
     snprintf(s.state_dir, sizeof s.state_dir, "%s/localdata/pharos", AURIX_APP_DIR);
     snprintf(s.sw_version, sizeof s.sw_version, "%s", AURIX_VERSION);
     snprintf(s.model_version, sizeof s.model_version, "mobilefacenet-128-int8-%s", a->cfg.embed_kind);
@@ -266,6 +281,18 @@ static gpointer pharos_restart_thread(gpointer data)
 }
 
 static guint pharos_restart_src;
+
+static void web_status_cb(char *out, size_t n, void *user)
+{
+    app_ctx *a = user;
+    g_mutex_lock(&a->gal_lock);
+    snprintf(out, n, "%s", a->pharos_status_text[0] ? a->pharos_status_text : "Not commissioned");
+    g_mutex_unlock(&a->gal_lock);
+}
+
+static void schedule_pharos_restart(app_ctx *a);
+static gboolean commission_changed_idle(gpointer data) { schedule_pharos_restart(data); return G_SOURCE_REMOVE; }
+static void web_changed_cb(void *user) { g_idle_add(commission_changed_idle, user); }   /* from the web thread */
 
 static gboolean pharos_restart_due(gpointer data)
 {
@@ -495,7 +522,9 @@ int main(void)
                    ns, ns * 10000 / 1e6);
         }
         g_timeout_add_seconds(5, metrics_tick, NULL);
-        web_start(AURIX_APP_DIR "/web/dashboard.html");
+        static web_commissioning wc;
+        wc = (web_commissioning){ AURIX_APP_DIR "/localdata/pharos", web_status_cb, web_changed_cb, &a };
+        web_start(AURIX_APP_DIR "/web/dashboard.html", &wc);
     }
     if (a.params) pharos_restart_thread(&a);          /* initial start (synchronous, no client yet) */
 

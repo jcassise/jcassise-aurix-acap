@@ -1,5 +1,6 @@
 #include "web.h"
 #include "metrics.h"
+#include "commission.h"
 #include <jansson.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -42,10 +43,87 @@ static int has_query_key(const char *uri, const char *key)
     return 0;
 }
 
-web_reply web_route(const char *uri, const char *html_path)
+static web_reply json_reply(int status, json_t *o)
+{
+    web_reply r = { status, "application/json", NULL, 0 };
+    r.body = json_dumps(o, JSON_COMPACT);
+    json_decref(o);
+    r.len = r.body ? strlen(r.body) : 0;
+    return r;
+}
+
+static web_reply json_error(int status, const char *msg)
+{
+    return json_reply(status, json_pack("{s:{s:s}}", "error", "message", msg));
+}
+
+static json_t *commission_view(const web_commissioning *wc)
+{
+    commission c;
+    int have = commission_load(wc->state_dir, &c) == 0;
+    char st[256] = "";
+    if (wc->status) wc->status(st, sizeof st, wc->user);
+    json_t *o = json_pack("{s:b,s:s,s:s,s:b,s:o,s:s}", "commissioned", have, "url", have ? c.url : "",
+                          "deviceId", have ? c.device_id : "", "tokenSet", have && c.token[0],
+                          "cert", commission_cert_summary(have ? c.trust : ""), "status", st);
+    explicit_bzero(&c, sizeof c);
+    return o;
+}
+
+static web_reply commission_post(const web_request *rq, const web_commissioning *wc)
+{
+    if (!rq->csrf_header) return json_error(403, "missing X-AURIX-Request header");
+    if (!rq->body || rq->body_len == 0 || rq->body_len > 65536) return json_error(400, "request body missing or too large");
+    json_t *in = json_loadb(rq->body, rq->body_len, 0, NULL);
+    if (!json_is_object(in)) { json_decref(in); return json_error(400, "body must be a JSON object"); }
+
+    if (json_is_true(json_object_get(in, "clear"))) {
+        json_decref(in);
+        commission_clear(wc->state_dir);
+        if (wc->changed) wc->changed(wc->user);
+        return json_reply(200, commission_view(wc));
+    }
+    commission old, c;
+    int had = commission_load(wc->state_dir, &old) == 0;
+    memset(&c, 0, sizeof c);
+    const char *u = json_string_value(json_object_get(in, "url"));
+    const char *d = json_string_value(json_object_get(in, "deviceId"));
+    const char *t = json_string_value(json_object_get(in, "token"));
+    json_t *cj = json_object_get(in, "cert");
+    snprintf(c.url, sizeof c.url, "%s", u ? u : "");
+    snprintf(c.device_id, sizeof c.device_id, "%s", d ? d : "");
+    /* blank token / absent cert = keep what is saved */
+    snprintf(c.token, sizeof c.token, "%s", t && *t ? t : had ? old.token : "");
+    if (json_is_string(cj)) {
+        if (json_string_length(cj) >= sizeof c.trust) { json_decref(in); explicit_bzero(&old, sizeof old); return json_error(400, "certificate too large"); }
+        snprintf(c.trust, sizeof c.trust, "%s", json_string_value(cj));
+    } else if (had) {
+        snprintf(c.trust, sizeof c.trust, "%s", old.trust);
+    }
+    json_decref(in);
+    explicit_bzero(&old, sizeof old);
+    /* strip surrounding whitespace the browser may add */
+    for (char *f = c.url + strlen(c.url); f > c.url && (f[-1] == ' ' || f[-1] == '\n' || f[-1] == '\r'); ) *--f = 0;
+    char why[256] = "";
+    if (commission_validate(&c, why, sizeof why)) { explicit_bzero(&c, sizeof c); return json_error(422, why); }
+    int rc = commission_save(wc->state_dir, &c);
+    explicit_bzero(&c, sizeof c);
+    if (rc) return json_error(500, "could not save on the camera (storage full?)");
+    syslog(LOG_INFO, "web: Pharos connection saved from the AURIX page");
+    if (wc->changed) wc->changed(wc->user);
+    return json_reply(200, commission_view(wc));
+}
+
+web_reply web_route(const web_request *rq, const char *html_path, const web_commissioning *wc)
 {
     web_reply r = { 200, "text/html; charset=utf-8", NULL, 0 };
-    if (has_query_key(uri, "data")) {
+    int post = rq->method && !strcmp(rq->method, "POST");
+    if (has_query_key(rq->uri, "commission")) {
+        if (!wc || !wc->state_dir) return json_error(503, "commissioning unavailable");
+        return post ? commission_post(rq, wc) : json_reply(200, commission_view(wc));
+    }
+    if (post) return json_error(405, "POST is only accepted for ?commission");
+    if (has_query_key(rq->uri, "data")) {
         json_t *m = metrics_json();
         r.body = json_dumps(m, JSON_COMPACT);
         json_decref(m);
@@ -67,6 +145,7 @@ web_reply web_route(const char *uri, const char *html_path)
 #include <fcgiapp.h>
 
 static char g_html[256];
+static web_commissioning g_wc;
 
 static void *fcgi_loop(void *arg)
 {
@@ -74,7 +153,20 @@ static void *fcgi_loop(void *arg)
     FCGX_Request req;
     if (FCGX_InitRequest(&req, sock, 0)) { syslog(LOG_ERR, "web: FCGX_InitRequest failed"); return NULL; }
     while (FCGX_Accept_r(&req) == 0) {
-        web_reply r = web_route(FCGX_GetParam("REQUEST_URI", req.envp), g_html);
+        const char *method = FCGX_GetParam("REQUEST_METHOD", req.envp);
+        const char *cl = FCGX_GetParam("CONTENT_LENGTH", req.envp);
+        const char *xr = FCGX_GetParam("HTTP_X_AURIX_REQUEST", req.envp);
+        long want = cl ? atol(cl) : 0;
+        char *body = NULL;
+        int got = 0;
+        if (want > 0 && want <= 65536) {
+            body = malloc((size_t)want + 1);
+            if (body) { got = FCGX_GetStr(body, (int)want, req.in); body[got > 0 ? got : 0] = 0; }
+        }
+        web_request rq = { method, FCGX_GetParam("REQUEST_URI", req.envp), body, got > 0 ? (size_t)got : 0,
+                           xr && !strcmp(xr, "1") };
+        web_reply r = web_route(&rq, g_html, &g_wc);
+        if (body) { explicit_bzero(body, (size_t)want); free(body); }
         FCGX_FPrintF(req.out, "Status: %d\r\nContent-Type: %s\r\nCache-Control: no-store\r\n"
                               "X-Content-Type-Options: nosniff\r\nContent-Length: %lu\r\n\r\n",  /* libfcgi printf has no %zu */
                      r.status, r.content_type, (unsigned long)r.len);
@@ -85,8 +177,9 @@ static void *fcgi_loop(void *arg)
     return NULL;
 }
 
-int web_start(const char *html_path)
+int web_start(const char *html_path, const web_commissioning *wc)
 {
+    if (wc) g_wc = *wc;
     const char *path = getenv("FCGI_SOCKET_NAME");
     if (!path) {
         syslog(LOG_WARNING, "web: FCGI_SOCKET_NAME not set - dashboard unavailable");

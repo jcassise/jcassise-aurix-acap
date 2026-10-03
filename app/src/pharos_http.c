@@ -79,6 +79,37 @@ static int parse_hex_fp(const char *s, size_t n, char out[65])
     return k == 64 ? 0 : -1;
 }
 
+
+/* "sha256 Fingerprint=AB:CD..." (openssl), "SHA-256: ...", "Fingerprint: ..." -> value only. */
+static char *strip_label(char *t)
+{
+    static const char *labels[] = { "sha256 fingerprint", "sha-256 fingerprint", "sha256", "sha-256",
+                                    "fingerprint", "spki", "pin", NULL };
+    for (int again = 1; again;) {
+        again = 0;
+        while (*t == ' ' || *t == '\t') t++;
+        for (int i = 0; labels[i]; i++) {
+            size_t n = strlen(labels[i]);
+            if (!strncasecmp(t, labels[i], n) && (t[n] == '=' || t[n] == ':' || t[n] == ' ')) {
+                /* never strip the "sha256" of a "sha256//" pin */
+                if (t[n] == ':' && t[n + 1] == '/') continue;
+                t += n + 1;
+                again = 1;
+                break;
+            }
+        }
+    }
+    return t;
+}
+
+static int is_b64_pin(const char *t, size_t n)
+{
+    if (n != 44 || t[43] != '=') return 0;
+    for (size_t i = 0; i < 43; i++)
+        if (!isalnum((unsigned char)t[i]) && t[i] != '+' && t[i] != '/') return 0;
+    return 1;
+}
+
 static int add_pin(ph_client *c, const char *pin)
 {
     size_t need = strlen(c->pins) + strlen(pin) + 2;
@@ -119,21 +150,39 @@ static int parse_trust(ph_client *c, const char *trust, char *why, size_t wl)
     }
     char buf[400];
     snprintf(buf, sizeof buf, "%s", trust);
-    for (char *tok = strtok(buf, ";,"); tok; tok = strtok(NULL, ";,")) {
-        while (*tok == ' ') tok++;
+    for (char *tok = strtok(buf, ";,\n"); tok; tok = strtok(NULL, ";,\n")) {
+        tok = strip_label(tok);
         size_t n = strlen(tok);
-        while (n && (tok[n - 1] == ' ' || tok[n - 1] == '\n' || tok[n - 1] == '\r')) tok[--n] = 0;
+        while (n && (tok[n - 1] == ' ' || tok[n - 1] == '\r' || tok[n - 1] == '\t')) tok[--n] = 0;
         if (!n) continue;
         if (!strncmp(tok, "sha256//", 8)) {
-            if (n < 8 + 43 || add_pin(c, tok)) { set_err(why, wl, "Server certificate: bad sha256// pin"); return -1; }
+            for (char *q = tok + 8; *q; q++) if (*q == ' ') *q = '+';     /* web forms turn '+' into ' ' */
+            if (!is_b64_pin(tok + 8, n - 8) || add_pin(c, tok)) {
+                set_err(why, wl, "Server certificate: sha256// pin must be 44 base64 characters");
+                return -1;
+            }
+        } else if (is_b64_pin(tok, n)) {                                   /* bare SPKI pin */
+            char pin[64];
+            snprintf(pin, sizeof pin, "sha256//%s", tok);
+            if (add_pin(c, pin)) { set_err(why, wl, "Server certificate: too many pins"); return -1; }
         } else if (c->n_fp < 2 && !parse_hex_fp(tok, n, c->fingerprint[c->n_fp])) {
             c->n_fp++;
         } else {
-            set_err(why, wl, "Server certificate: expected PEM, sha256//<base64> pin, or 64-hex fingerprint");
+            char m[200];
+            snprintf(m, sizeof m, "Server certificate: not a PEM, SHA-256 fingerprint or sha256// pin (got \"%.24s%s\", %zu characters)",
+                     tok, n > 24 ? "..." : "", n);
+            set_err(why, wl, m);
             return -1;
         }
     }
     return 0;
+}
+
+int ph_trust_validate(const char *trust, char *why, size_t wl)
+{
+    ph_client tmp;
+    memset(&tmp, 0, sizeof tmp);
+    return parse_trust(&tmp, trust, why, wl);
 }
 
 /* ---------- client ---------- */

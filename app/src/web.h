@@ -13,10 +13,29 @@ typedef struct {
     size_t len;
 } web_reply;
 
-/* Pure routing (host-testable). html_path: dashboard file. */
-web_reply web_route(const char *request_uri, const char *html_path);
+typedef struct {
+    const char *method;         /* "GET" / "POST" */
+    const char *uri;            /* REQUEST_URI */
+    const char *body;           /* POST body (may be NULL) */
+    size_t body_len;
+    int csrf_header;            /* request carried "X-AURIX-Request: 1" */
+} web_request;
+
+/* Commissioning: where commission.json lives, how to read live status, and who to tell on change. */
+typedef struct {
+    const char *state_dir;
+    void (*status)(char *out, size_t n, void *user);     /* current Pharos state text */
+    void (*changed)(void *user);                          /* called after a save or clear (any thread) */
+    void *user;
+} web_commissioning;
+
+/* Pure routing (host-testable). html_path: dashboard file.
+ *   GET  ?data         live metrics
+ *   GET  ?commission   Pharos connection (never returns the token)
+ *   POST ?commission   save {url, deviceId, token?, cert?} or {clear:true}; needs X-AURIX-Request: 1 */
+web_reply web_route(const web_request *rq, const char *html_path, const web_commissioning *wc);
 
 /* Starts the FastCGI loop in a thread if FCGI_SOCKET_NAME is set. Returns 0 on success. */
-int web_start(const char *html_path);
+int web_start(const char *html_path, const web_commissioning *wc);
 
 #endif

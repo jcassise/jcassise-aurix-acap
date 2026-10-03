@@ -51,6 +51,9 @@ ph_response ph_request(ph_client *c, const char *method, const char *path,
                        const void *body, size_t body_len, const char *ctype, long timeout_s);
 void ph_response_free(ph_response *r);
 
+/* Checks a commissioning certificate setting without connecting. 0 = usable. */
+int ph_trust_validate(const char *trust, char *why, size_t why_len);
+
 /* Exposed for tests: SPKI pin ("sha256//...") of a PEM or DER certificate. */
 int ph_spki_pin_from_cert(const unsigned char *data, size_t len, int is_pem, char *out, size_t out_len);
 

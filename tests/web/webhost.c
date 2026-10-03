@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include "metrics.h"
 #include "web.h"
+#include "commission.h"
 int main(int c, char **v) {
     (void)c;
     metrics_identity id = { "0.5.0", "ARTPEC-8", "DLPU", "dlpu", "mobilefacenet-128-int8-dlpu", "AXIS P3267-LV",
@@ -27,7 +28,8 @@ int main(int c, char **v) {
         metrics_sample(5, "/tmp");
     }
     setenv("FCGI_SOCKET_NAME", getenv("FCGI_SOCK") ? getenv("FCGI_SOCK") : "/tmp/aurix-web.sock", 1);
-    if (web_start(v[1])) return 1;
+    static web_commissioning wc = { "/tmp/aurix-webhost-commission", NULL, NULL, NULL };
+    if (web_start(v[1], &wc)) return 1;
     sleep(30);
     return 0;
 }

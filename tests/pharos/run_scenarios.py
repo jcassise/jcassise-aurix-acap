@@ -67,6 +67,23 @@ for label, trust in (("fingerprint", None), ("PEM", None)):
     check(f"S2d connects with {label}", "STATE Connected" in out, out[-300:])
     sim.stop()
 
+# S2g fingerprint pasted exactly as openssl prints it ("sha256 Fingerprint=AB:CD:...")
+sim = fresh()
+fp = sim.cert["fingerprint"].upper()
+out, _ = run(sim, 1.5, trust="sha256 Fingerprint=" + ":".join(fp[i:i + 2] for i in range(0, 64, 2)))
+check("S2g openssl-style fingerprint connects", "STATE Connected" in out, out[-300:])
+sim.stop()
+
+# S2h bare SPKI pin and '+' mangled to spaces both connect
+sim = fresh()
+out, _ = run(sim, 1.5, trust=sim.cert["spki_pin"][8:])
+check("S2h bare SPKI pin connects", "STATE Connected" in out, out[-300:])
+sim.stop()
+sim = fresh()
+out, _ = run(sim, 1.5, trust=sim.cert["spki_pin"].replace("+", " "))
+check("S2h pin with '+' turned into spaces connects", "STATE Connected" in out or "+" not in sim.cert["spki_pin"], out[-300:])
+sim.stop()
+
 # S2f PEM pasted into a one-line field (newlines lost) still works
 sim = fresh()
 out, _ = run(sim, 1.5, trust=" ".join(sim.cert["pem"].split()))

@@ -95,15 +95,22 @@ Raw JSON: `aurix.cgi?data` - usable for logging benchmarks from a script.
 
 ## Connecting to Pharos (protocol v1, step 1)
 
-In Pharos: Hardware → AURIX devices → Add. Copy the values into the camera's
-**Apps → aurix → Settings**:
+In Pharos: Hardware → AURIX devices → Add. Then on the camera open **Apps → aurix → Open**
+and use the **Pharos connection** panel at the bottom of the AURIX page: Pharos address,
+device ID, device token (masked; never shown again) and the server certificate - choose the
+certificate **file** (PEM or DER) or paste its fingerprint. Saving validates everything,
+shows the certificate's name, fingerprint and expiry to check against Pharos, and connects.
+It is stored in `localdata/pharos/commission.json` (owner-only) and takes precedence over
+the app settings below.
+
+The older route still works - **Apps → aurix → Settings**:
 
 | Setting | Value |
 |---|---|
 | PharosUrl | `https://<pharos-host>` (AURIX appends `/aurix/v1`) |
 | PharosDeviceId | the device ID Pharos created |
 | PharosToken | the one-time device token |
-| PharosServerCert | certificate fingerprint (64 hex, colons ok), `sha256//<base64>` SPKI pin, or the PEM; two pins separated by `;` during rotation. Empty = CA validation |
+| PharosServerCert | certificate fingerprint (as `openssl x509 -fingerprint -sha256` prints it, or plain hex), `sha256//<base64>` or bare base64 SPKI pin, or the PEM; two separated by `;` during rotation. Empty = CA validation |
 
 **PharosStatus** shows the connection state (Connected, Credentials rejected, TLS pin
 mismatch, Revoked, …). While commissioned, Pharos owns the match threshold and minimum

@@ -105,6 +105,24 @@ td.num, th.num { text-align: right; }
 .limit.binding .track b { background: var(--signal); }
 .fine { color: var(--muted); font-size: 12px; margin: 14px 0 0; max-width: 90ch; }
 @media (prefers-reduced-motion: reduce) { .track b { transition: none; } }
+.connect { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
+.connect form { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px 34px; max-width: 980px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-weight: 600; font-size: 14px; }
+.field small { color: var(--muted); font-size: 12px; }
+.field input[type=text], .field input[type=url], .field input[type=password], .field textarea {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+.field textarea { min-height: 64px; resize: vertical; font-size: 13px; }
+.field input:focus-visible, .field textarea:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+.actions { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.actions .primary { background: var(--ink); color: var(--paper); border-color: var(--ink); padding: 6px 16px; }
+.actions .quiet { color: var(--alert); }
+.result { margin: 0; }
+.result.bad { color: var(--alert); } .result.good { color: var(--ok); }
+.certbox { grid-column: 1 / -1; margin: 0; padding: 10px 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; overflow-wrap: anywhere; }
+.certbox[hidden] { display: none; }
+.certbox dt { color: var(--muted); } .certbox dd { margin: 0; }
 footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 22px; }
 @media (prefers-reduced-motion: reduce) { .seg, .meter b { transition: none; } }
 </style>
@@ -114,7 +132,7 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
   <header>
     <div class="brand"><b>AURIX</b><span id="ident">Connecting to camera…</span></div>
     <div class="status">
-      <span class="pill" id="pharos" title=""><span class="dot"></span><span id="pharosText">Pharos</span></span>
+      <a class="pill" id="pharos" title="" href="#connect" style="text-decoration:none"><span class="dot"></span><span id="pharosText">Pharos</span></a>
       <span id="updated" aria-live="polite"></span>
       <button id="pause" type="button" aria-pressed="false">Pause</button>
     </div>
@@ -203,6 +221,32 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
       <tbody id="recent"></tbody></table>
     </div>
     <p class="empty" id="recentEmpty">No matches yet. Enrolled people appear here when the camera recognises them.</p>
+  </section>
+
+
+  <section class="connect" id="connect" aria-labelledby="connTitle">
+    <h2 id="connTitle">Pharos connection</h2>
+    <p class="cap-sub" id="connStatus">Checking…</p>
+    <form id="connForm" novalidate>
+      <div class="field"><label for="cUrl">Pharos address</label>
+        <input id="cUrl" type="url" placeholder="https://pharos.site.local" autocomplete="off" required>
+        <small>From Pharos: Hardware, AURIX devices, Add.</small></div>
+      <div class="field"><label for="cId">Device ID</label>
+        <input id="cId" type="text" placeholder="aurix-lobby-01" autocomplete="off" spellcheck="false" required></div>
+      <div class="field"><label for="cTok">Device token</label>
+        <input id="cTok" type="password" autocomplete="new-password" spellcheck="false">
+        <small id="cTokHint">Shown once by Pharos when the device is added.</small></div>
+      <div class="field"><label for="cFile">Server certificate</label>
+        <input id="cFile" type="file" accept=".pem,.crt,.cer,.der,application/x-x509-ca-cert">
+        <small id="cFileHint">Choose the Pharos certificate file (PEM or DER), or paste its fingerprint below.</small>
+        <textarea id="cText" placeholder="sha256 Fingerprint=AC:78:54:… or sha256//…" spellcheck="false"></textarea></div>
+      <dl class="certbox" id="certBox" hidden></dl>
+      <div class="actions">
+        <button class="primary" type="submit" id="cSave">Save and connect</button>
+        <button class="quiet" type="button" id="cClear">Disconnect from Pharos</button>
+        <p class="result" id="cResult" aria-live="polite"></p>
+      </div>
+    </form>
   </section>
 
   <footer id="foot"></footer>
@@ -422,15 +466,79 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
     };
   }
 
+
+  /* ---------------- Pharos connection ---------------- */
+  var certPem = null;          /* certificate chosen from a file, as PEM text */
+  function b64(buf) { var s = "", b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
+  function derToPem(buf) { return "-----BEGIN CERTIFICATE-----\n" + b64(buf).replace(/(.{64})/g, "$1\n").replace(/\n$/, "") + "\n-----END CERTIFICATE-----\n"; }
+  function showCert(c) {
+    var box = $("certBox"); box.textContent = "";
+    if (!c || c.kind === "none") { box.hidden = true; return; }
+    var rows = c.kind === "pem" ? [["Issued to", c.subject || "–"], ["Fingerprint (SHA-256)", c.fingerprint || "–"],
+      ["Expires", c.notAfter ? new Date(c.notAfter).toLocaleDateString() + (c.expired ? " (expired)" : "") : "–"]]
+      : [[c.kind === "pin" ? "Key pin" : "Fingerprint", c.value || "–"]];
+    rows.push(["Check", "This must match what Pharos shows for its certificate."]);
+    rows.forEach(function (r) { var dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = r[0]; dd.textContent = r[1]; box.appendChild(dt); box.appendChild(dd); });
+    box.hidden = false;
+  }
+  function result(text, cls) { set("cResult", text, "result " + (cls || "")); }
+  function showConn(v) {
+    $("cUrl").value = v.url || ""; $("cId").value = v.deviceId || "";
+    $("cTok").value = ""; $("cTok").placeholder = v.tokenSet ? "Saved. Leave blank to keep it." : "";
+    set("cTokHint", v.tokenSet ? "A token is saved on the camera. It is never shown again." : "Shown once by Pharos when the device is added.");
+    set("connStatus", v.commissioned ? "Status: " + (v.status || "–") : "This camera is not connected to Pharos. Enter the details from Pharos and save.");
+    $("cClear").hidden = !v.commissioned;
+    showCert(v.cert);
+  }
+  function loadConn() {
+    if (demo) { set("connStatus", "Connection settings are available on the camera."); $("cSave").disabled = true; $("cClear").hidden = true; return; }
+    fetch("aurix.cgi?commission", { cache: "no-store", credentials: "same-origin" })
+      .then(function (r) { return r.json(); }).then(showConn).catch(function () { set("connStatus", "Could not read the connection settings."); });
+  }
+  function postConn(body) {
+    return fetch("aurix.cgi?commission", { method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-AURIX-Request": "1" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j.error && j.error.message) || "HTTP " + r.status); return j; }); });
+  }
+  $("cFile").addEventListener("change", function () {
+    var f = this.files && this.files[0]; certPem = null;
+    if (!f) return;
+    if (f.size > 32768) { result("That file is too large to be a certificate.", "bad"); return; }
+    var rd = new FileReader();
+    rd.onload = function () {
+      var buf = rd.result, head = new TextDecoder().decode(new Uint8Array(buf).slice(0, 40));
+      certPem = head.indexOf("-----BEGIN") >= 0 ? new TextDecoder().decode(buf) : derToPem(buf);
+      if (certPem.indexOf("-----BEGIN CERTIFICATE-----") < 0) { certPem = null; result("That file does not contain a certificate.", "bad"); return; }
+      $("cText").value = ""; result("Certificate file loaded. Save to use it.", "");
+    };
+    rd.readAsArrayBuffer(f);
+  });
+  $("connForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var body = { url: $("cUrl").value.trim(), deviceId: $("cId").value.trim() };
+    if ($("cTok").value) body.token = $("cTok").value.trim();
+    if (certPem) body.cert = certPem; else if ($("cText").value.trim()) body.cert = $("cText").value.trim();
+    $("cSave").disabled = true; result("Saving…", "");
+    postConn(body).then(function (v) { showConn(v); certPem = null; $("cFile").value = ""; $("cText").value = "";
+      result("Saved. Connecting to Pharos…", "good"); setTimeout(loadConn, 4000); })
+      .catch(function (err) { result(err.message, "bad"); })
+      .then(function () { $("cSave").disabled = false; });
+  });
+  $("cClear").addEventListener("click", function () {
+    if (!confirm("Disconnect this camera from Pharos? The saved token and certificate are removed from the camera.")) return;
+    postConn({ clear: true }).then(function (v) { showConn(v); result("Disconnected from Pharos.", ""); })
+      .catch(function (err) { result(err.message, "bad"); });
+  });
+
   function tick() {
     if (paused) return;
     if (demo) { render(simulate()); lastOk = Date.now(); return; }
     fetch("aurix.cgi?data", { cache: "no-store", credentials: "same-origin" })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (m) { failures = 0; lastOk = Date.now(); $("stale").hidden = true; render(m); })
+      .then(function (m) { failures = 0; var first = !lastOk; lastOk = Date.now(); $("stale").hidden = true; render(m); if (first) loadConn(); })
       .catch(function () {
         failures++;
-        if (!lastOk && failures >= 2) { demo = true; $("demo").hidden = false; tick(); return; }
+        if (!lastOk && failures >= 2) { demo = true; $("demo").hidden = false; tick(); loadConn(); return; }
         if (lastOk) $("stale").hidden = false;
       });
   }
