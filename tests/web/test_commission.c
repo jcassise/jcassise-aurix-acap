@@ -46,18 +46,28 @@ int main(int argc, char **argv)
     char *bs = json_dumps(b, 0); snprintf(body, sizeof body, "%s", bs); free(bs); json_decref(b);
 
     j = call(&wc, "POST", body, 0, &st);
-    CHECK(st == 403, "POST without X-AURIX-Request is refused (got %d)", st);
+    CHECK(st == 403 && !strcmp(json_string_value(json_object_get(json_object_get(j, "error"), "code")), "missing_request_header"),
+          "POST without X-AURIX-Request is refused with a code (got %d)", st);
     json_decref(j);
     CHECK(changed == 0, "nothing changed after refused POST");
 
     j = call(&wc, "POST", "{\"url\":\"https://pharos.site.local\",\"deviceId\":\"aurix-lobby-01\",\"token\":\"secret-token-123\",\"cert\":\"pharos.site.local\"}", 1, &st);
-    CHECK(st == 422 && strstr(json_string_value(json_object_get(json_object_get(j, "error"), "message")), "got \"pharos.site.local\""),
-          "bad certificate is rejected with what was received (got %d)", st);
+    CHECK(st == 422 && strstr(json_string_value(json_object_get(json_object_get(j, "error"), "message")), "got \"pharos.site.local\"") &&
+          !strcmp(json_string_value(json_object_get(json_object_get(j, "error"), "code")), "invalid_cert"),
+          "bad certificate is rejected with a code and what was received (got %d)", st);
     json_decref(j);
 
     j = call(&wc, "POST", "{\"url\":\"https://p\",\"deviceId\":\"aurix-lobby-01\",\"token\":\"secret-token-123\"}", 1, &st);
-    CHECK(st == 422 && strstr(json_string_value(json_object_get(json_object_get(j, "error"), "message")), "incomplete"),
-          "incomplete address gets an accurate message");
+    CHECK(st == 422 && strstr(json_string_value(json_object_get(json_object_get(j, "error"), "message")), "incomplete") &&
+          !strcmp(json_string_value(json_object_get(json_object_get(j, "error"), "code")), "invalid_url"),
+          "incomplete address gets an accurate message and code");
+    json_decref(j);
+    j = call(&wc, "POST", "{\"url\":\"https://pharos.site.local\",\"deviceId\":\"aurix-lobby-01\",\"token\":\"secret-token-123\",\"cert\":\"\"}", 1, &st);
+    CHECK(st == 200 && !strcmp(json_string_value(json_object_get(json_object_get(j, "cert"), "kind")), "none"),
+          "an empty server key means public-CA validation (shown as kind none), not blind trust");
+    json_decref(j);
+    j = call(&wc, "POST", "{\"clear\":true}", 1, &st);
+    changed = 0;                                   /* the counts below start from a clean camera */
     json_decref(j);
 
     j = call(&wc, "POST", body, 1, &st);

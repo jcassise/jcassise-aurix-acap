@@ -32,6 +32,7 @@
 #include "access.h"
 #include "jpeg.h"
 #include "settings.h"
+#include "snapshot.h"
 
 #define APP_NAME "aurix"
 #define MATCH_LOG_INTERVAL_S 5.0
@@ -483,40 +484,6 @@ static long long wall_ms(void)
 
 static int cmp_acc(const void *k, const void *e) { return strcmp(k, ((const struct acc_person *)e)->ref); }
 
-/* Face crop for the event (>= 240 px short side, or native size if the face is smaller; never upscaled). */
-static unsigned char *face_jpeg(const aurix_image *f, const trk_track *t, size_t *len)
-{
-    float cx = (t->x0 + t->x1) / 2, cy = (t->y0 + t->y1) / 2;
-    float side = fmaxf(t->x1 - t->x0, t->y1 - t->y0) * 1.5f;
-    int x0 = (int)fmaxf(0, cx - side / 2), y0 = (int)fmaxf(0, cy - side / 2);
-    int x1 = (int)fminf((float)f->w, cx + side / 2), y1 = (int)fminf((float)f->h, cy + side / 2);
-    if (x1 - x0 < 16 || y1 - y0 < 16) return NULL;
-    aurix_image crop = { f->data + (size_t)y0 * f->stride + (size_t)x0 * 3, x1 - x0, y1 - y0, f->stride, 3 };
-    int cw = crop.w, ch = crop.h;
-    if (ch > 480) { cw = cw * 480 / ch; ch = 480; }            /* cap the size, keep detail */
-    if (cw == crop.w) return jpeg_encode_rgb(&crop, 85, len);
-    unsigned char *px = malloc((size_t)cw * ch * 3);
-    if (!px) return NULL;
-    aurix_image small = { px, cw, ch, cw * 3, 3 };
-    resize_bilinear(&crop, &small);
-    unsigned char *j = jpeg_encode_rgb(&small, 85, len);
-    free(px);
-    return j;
-}
-
-static unsigned char *scene_jpeg(const aurix_image *f, size_t *len)
-{
-    int sw = 1280, sh = 720;
-    if (f->w <= sw) return jpeg_encode_rgb(f, 75, len);
-    unsigned char *px = malloc((size_t)sw * sh * 3);
-    if (!px) return NULL;
-    aurix_image small = { px, sw, sh, sw * 3, 3 };
-    resize_bilinear(f, &small);
-    unsigned char *j = jpeg_encode_rgb(&small, 75, len);
-    free(px);
-    return j;
-}
-
 static const char *wl_name(int cat)
 {
     return cat == AURIX_CAT_THREAT ? "threat" : cat == AURIX_CAT_CONCERN ? "concern" : "no_concern";
@@ -547,8 +514,17 @@ static void emit_event(app_ctx *a, trk_track *t, int ended, const aurix_image *f
     }
     unsigned char *face = NULL, *scene = NULL;
     size_t fl = 0, sl = 0;
-    if (frame && t->seen_now && (t->revision == 0 || t->better_face)) face = face_jpeg(frame, t, &fl);
-    if (frame && t->revision == 0 && pc->scene_images) scene = scene_jpeg(frame, &sl);
+    if (frame && t->seen_now && (t->revision == 0 || t->better_face)) face = snapshot_face(frame, t, &fl);
+    if (frame && t->revision == 0 && pc->scene_images) {
+        scene = snapshot_scene(frame, &sl);
+        if (scene) {                                 /* where this person is in that picture */
+            float bx0 = t->x0, by0 = t->y0, bx1 = t->x1, by1 = t->y1;
+            if (t->has_face_geo) { bx0 = t->fcx - t->frx; bx1 = t->fcx + t->frx; by0 = t->fcy - t->fry; by1 = t->fcy + t->fry; }
+            t->scene_box[0] = fmaxf(0, bx0 / frame->w); t->scene_box[1] = fmaxf(0, by0 / frame->h);
+            t->scene_box[2] = fminf(1, bx1 / frame->w) - t->scene_box[0]; t->scene_box[3] = fminf(1, by1 / frame->h) - t->scene_box[1];
+            t->scene_at = now;
+        }
+    }
     c.has_face = face != NULL || t->revision > 0;
     c.has_scene = scene != NULL || (t->revision > 0 && pc->scene_images);
     int rev = t->revision + 1;

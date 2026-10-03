@@ -87,6 +87,8 @@ static void push_test_events(const char *device_id, int n, int with_scene)
         for (int f = 0; f < 3; f++)
             tracker_observe(&tr, ti, NULL, 0, known ? key : "", known ? "Test Person" : "", known ? key : "", known ? 1 : 0,
                             known ? 0.7f : 0.1f, -1, 0.5f + 0.1f * f, 120, now);
+        tr.t[ti].scene_box[0] = 0.40f; tr.t[ti].scene_box[1] = 0.25f;   /* where the face is in the scene picture */
+        tr.t[ti].scene_box[2] = 0.08f; tr.t[ti].scene_box[3] = 0.15f; tr.t[ti].scene_at = now;
         const char *wl = known ? "threat" : NULL;
         event_ctx c = { device_id, "mobilefacenet-128-int8-dlpu", "Lobby", 0.45f, wl, 0, { 0, "", "" }, 1, with_scene, 0 };
         size_t fl = 0, sl = 0;

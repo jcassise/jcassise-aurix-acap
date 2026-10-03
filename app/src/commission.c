@@ -58,19 +58,26 @@ int commission_clear(const char *dir)
     return unlink(p) == 0 ? 0 : -1;
 }
 
-int commission_validate(const commission *c, char *why, size_t n)
+int commission_validate(const commission *c, char *why, size_t n, const char **code)
 {
+    const char *dummy;
+    if (!code) code = &dummy;
+    *code = "invalid_url";
     if (strncasecmp(c->url, "https://", 8)) { snprintf(why, n, "Pharos address must start with https://"); return -1; }
     if (strlen(c->url) < 12) { snprintf(why, n, "Pharos address is incomplete - include the host name or IP address"); return -1; }
     for (const char *p = c->url; *p; p++)
         if (isspace((unsigned char)*p)) { snprintf(why, n, "Pharos address must not contain spaces"); return -1; }
+    *code = "invalid_device_id";
     size_t dl = strlen(c->device_id);
     if (!dl || dl > 64 || !isalnum((unsigned char)c->device_id[0])) { snprintf(why, n, "Device ID: 1-64 characters, starting with a letter or digit"); return -1; }
     for (const char *p = c->device_id; *p; p++)
         if (!isalnum((unsigned char)*p) && *p != '.' && *p != '_' && *p != '-') { snprintf(why, n, "Device ID may only use letters, digits, '.', '_' and '-'"); return -1; }
+    *code = "invalid_token";
     if (strlen(c->token) < 8) { snprintf(why, n, "Device token is missing or too short"); return -1; }
     for (const char *p = c->token; *p; p++)
         if ((unsigned char)*p < 0x21 || (unsigned char)*p > 0x7e) { snprintf(why, n, "Device token contains spaces or unusual characters - copy it again from Pharos"); return -1; }
+    *code = "invalid_cert";
+    /* empty = validate against the public certificate authorities (a CA-signed Pharos); never "trust anything" */
     return ph_trust_validate(c->trust, why, n);
 }
 

@@ -45,6 +45,9 @@ for eid, rev, applied in sim.event_puts:
         order_ok = False
     seen[eid] = rev
 check("E1 revisions arrive in increasing order", order_ok, str(sim.event_puts))
+boxes = [e["face"].get("box") for e in ev.values()]
+check("E1 face.box locates the person in the scene picture", all(b and 0 <= b["x"] <= 1 and 0 <= b["y"] <= 1 and 0 < b["w"] <= 1
+      and 0 < b["h"] <= 1 for b in boxes) and all(isinstance(e["face"].get("boxAt"), int) for e in ev.values()), str(boxes[:1]))
 check("E1 events and acks match the contract", not sim.violations, "; ".join(sim.violations[:3]))
 sim.stop()
 

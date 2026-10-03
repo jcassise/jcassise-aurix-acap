@@ -12,6 +12,7 @@
 #include "capacity.h"
 #include "jpeg.h"
 #include "tracker.h"
+#include "snapshot.h"
 #include "access.h"
 #include <glib.h>
 
@@ -610,6 +611,43 @@ static void test_face_geometry(void)
     CHECK(fabsf(yaw) < 4 && fabsf(pitch) < 4, "rolled frontal face pose %.1f/%.1f", yaw, pitch);
 }
 
+static void test_snapshots(void)
+{
+    char why[64];
+    for (int shape = 0; shape < 2; shape++) {               /* P3267 (4:3) and P3248 (16:9) analysis frames */
+        int W = shape ? 1920 : 1440, H = 1080;
+        unsigned char *px = calloc((size_t)W * H * 3, 1);
+        aurix_image f = { px, W, H, W * 3, 3 };
+        /* a red disc where the face is (centre 700,400) */
+        for (int y = 380; y < 420; y++) for (int x = 680; x < 720; x++) { unsigned char *p = px + ((size_t)y * W + x) * 3; p[0] = 255; }
+        size_t n = 0;
+        unsigned char *j = snapshot_scene(&f, &n);
+        aurix_image d;
+        CHECK(j && jpeg_decode_rgb(j, n, 4000, &d, why, sizeof why) == 0 && d.w == 1280 && d.h == (shape ? 720 : 960),
+              "scene %dx%d -> %dx%d (keeps the camera's shape)", W, H, d.w, d.h);
+        free(d.data); free(j);
+        /* face close-up centred on the face (landmarks), even though the detector box runs low */
+        trk_track t;
+        memset(&t, 0, sizeof t);
+        t.x0 = 650; t.x1 = 750; t.y0 = 360; t.y1 = 480;             /* box centre 420: lower than the face */
+        t.has_face_geo = 1; t.fcx = 700; t.fcy = 400; t.frx = 45; t.fry = 60;
+        j = snapshot_face(&f, &t, &n);
+        CHECK(j && jpeg_decode_rgb(j, n, 4000, &d, why, sizeof why) == 0, "face crop failed");
+        if (j) {
+            long sx = 0, sy = 0, cnt = 0;
+            for (int y = 0; y < d.h; y++) for (int x = 0; x < d.w; x++) {
+                const unsigned char *p = d.data + ((size_t)y * d.w + x) * 3;
+                if (p[0] > 150 && p[1] < 80) { sx += x; sy += y; cnt++; }
+            }
+            float mx = cnt ? (float)sx / cnt / d.w : 0, my = cnt ? (float)sy / cnt / d.h : 0;
+            CHECK(cnt && fabsf(mx - 0.5f) < 0.03f && fabsf(my - 0.5f) < 0.03f && d.w >= 120,
+                  "face crop centred on the face: marker at %.2f,%.2f of a %dx%d crop", mx, my, d.w, d.h);
+            free(d.data); free(j);
+        }
+        free(px);
+    }
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -631,6 +669,7 @@ int main(void)
     test_photo_swap(0);
     test_photo_swap(1);
     test_face_geometry();
+    test_snapshots();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

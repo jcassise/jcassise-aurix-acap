@@ -41,6 +41,7 @@ app/src/tracker.*      face tracking: one track per person in view, name locked 
 app/src/events.*       which tracks are reported (role, reporting.*) and their Event JSON
 app/src/event_queue.*  offline queue: upsert by eventId, priority eviction (strangers first, Threat last)
 app/src/access.*       virtual-access decisions: policies, zones, schedules, excluded dates, time zone
+app/src/snapshot.*     event pictures: face close-up and scene
 app/src/settings.*     every adjustable setting: console + Pharos, same keys and rules
 app/src/sync.*         identity sync with Pharos: poll, delta/full (staged, atomic), deletions, photos
 app/src/person_store.* people + on-camera templates, persisted in localdata/pharos/people.json
@@ -138,8 +139,9 @@ while the same face stays in view (head turns don't drop it). Each track keeps a
 print of its face: a different face landing in a track (people crossing, photos swapped) splits it
 within two checks, and an event continues if the same person is seen again within the close window. One event per visit: opened when the
 person is identified (or declared a stranger), updated if a clearly better face is seen, closed
-(`endedAt`) after `events.trackCloseSec` without the face. Face crop (≥240 px or native) and scene
-(1280×720) JPEGs follow each event. Watchlist role: Threat/Concern always, strangers as plain
+(`endedAt`) after `events.trackCloseSec` without the face. Face crop (centred on the face, ≥240 px or native) and scene
+(1280 wide, the camera's shape) JPEGs follow each event; `face.box` gives the person's position in the
+scene picture. Watchlist role: Threat/Concern always, strangers as plain
 sightings. Virtual access: every decision is an access event (granted, or denied with reason; a
 stranger is `denied/stranger`). Offline: events queue on the camera and are delivered in order.
 Overlay: ellipses with a soft glow; magenta = known but not authorised, orange-red = stranger in a

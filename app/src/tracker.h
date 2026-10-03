@@ -59,6 +59,8 @@ typedef struct {
     float fcx, fcy, frx, fry;     /* face ellipse from the landmarks (frame pixels, smoothed) */
     int has_face_geo;
     float yaw_deg, pitch_deg;     /* estimated head pose of the latest face */
+    float scene_box[4];           /* where the face is in the scene picture (x, y, w, h, 0-1); w <= 0 = none */
+    long long scene_at;           /* time of the frame the scene picture came from */
 } trk_track;
 
 typedef struct {

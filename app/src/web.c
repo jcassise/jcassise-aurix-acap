@@ -53,9 +53,17 @@ static web_reply json_reply(int status, json_t *o)
     return r;
 }
 
+/* {"error": {"code": "...", "message": "..."}}: code is stable for software, message is for people */
+static web_reply reply_error(int status, const char *code, const char *msg)
+{
+    return json_reply(status, json_pack("{s:{s:s,s:s}}", "error", "code", code, "message", msg));
+}
+
 static web_reply json_error(int status, const char *msg)
 {
-    return json_reply(status, json_pack("{s:{s:s}}", "error", "message", msg));
+    const char *code = status == 403 ? "missing_request_header" : status == 400 ? "bad_request" : status == 405 ? "method_not_allowed"
+                     : status == 503 ? "unavailable" : status == 500 ? "storage_failed" : "invalid";
+    return reply_error(status, code, msg);
 }
 
 static json_t *commission_view(const web_commissioning *wc)
@@ -106,7 +114,8 @@ static web_reply commission_post(const web_request *rq, const web_commissioning 
     /* strip surrounding whitespace the browser may add */
     for (char *f = c.url + strlen(c.url); f > c.url && (f[-1] == ' ' || f[-1] == '\n' || f[-1] == '\r'); ) *--f = 0;
     char why[256] = "";
-    if (commission_validate(&c, why, sizeof why)) { explicit_bzero(&c, sizeof c); return json_error(422, why); }
+    const char *code = "invalid";
+    if (commission_validate(&c, why, sizeof why, &code)) { explicit_bzero(&c, sizeof c); return reply_error(422, code, why); }
     int rc = commission_save(wc->state_dir, &c);
     explicit_bzero(&c, sizeof c);
     if (rc) return json_error(500, "could not save on the camera (storage full?)");
@@ -131,7 +140,7 @@ web_reply web_route(const web_request *rq, const char *html_path, const web_comm
             char why[200] = "";
             int rc = in && wc->settings_set ? wc->settings_set(in, why, sizeof why, wc->user) : -1;
             json_decref(in);
-            if (rc) return json_error(422, why[0] ? why : "body must be a JSON object of settings");
+            if (rc) return reply_error(422, "invalid_setting", why[0] ? why : "body must be a JSON object of settings");
             syslog(LOG_INFO, "web: settings saved from the AURIX page");
         }
         return json_reply(200, wc->settings_get(wc->user));

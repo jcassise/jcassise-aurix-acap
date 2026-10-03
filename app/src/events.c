@@ -59,6 +59,11 @@ json_t *event_build(const trk_track *t, int revision, int ended, long long now, 
         json_object_set_new(face, "yawDeg", json_integer((json_int_t)(t->yaw_deg >= 0 ? t->yaw_deg + 0.5f : t->yaw_deg - 0.5f)));
         json_object_set_new(face, "pitchDeg", json_integer((json_int_t)(t->pitch_deg >= 0 ? t->pitch_deg + 0.5f : t->pitch_deg - 0.5f)));
     }
+    if (t->scene_box[2] > 0) {                              /* the person's position in the scene picture */
+        json_object_set_new(face, "box", json_pack("{s:o,s:o,s:o,s:o}", "x", r2(t->scene_box[0]), "y", r2(t->scene_box[1]),
+                                                   "w", r2(t->scene_box[2]), "h", r2(t->scene_box[3])));
+        json_object_set_new(face, "boxAt", json_integer(t->scene_at + off));
+    }
     json_object_set_new(e, "face", face);
     json_object_set_new(e, "images", json_pack("{s:b,s:b}", "face", c->has_face, "scene", c->has_scene));
     return e;
