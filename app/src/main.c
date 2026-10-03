@@ -31,6 +31,7 @@
 #include "event_queue.h"
 #include "access.h"
 #include "jpeg.h"
+#include "settings.h"
 
 #define APP_NAME "aurix"
 #define MATCH_LOG_INTERVAL_S 5.0
@@ -54,6 +55,7 @@ typedef struct {
     struct acc_person { char ref[PS_ID_LEN]; int n; char pol[PS_MAX_POLICIES][PS_ID_LEN]; long long vf, vu; int wl; } *acc;
     int nacc;
     json_t *acc_policies;
+    json_t *local_settings;      /* settings saved from the console (localdata/settings.json) */
     char *gallery_param;         /* last Gallery setting value */
     aurix_gallery gallery;
     double *last_logged;         /* per gallery entry, for MATCH log rate limiting */
@@ -193,6 +195,74 @@ static char *param_get(AXParameter *p, const char *name)
 
 /* ---------------- Pharos integration ---------------- */
 
+#define SETTINGS_PATH AURIX_APP_DIR "/localdata/settings.json"
+
+static void apply_effective(app_ctx *a, const pc_config *c)
+{
+    g_mutex_lock(&a->gal_lock);
+    a->pcfg = *c;
+    a->threshold = (float)c->match_threshold;
+    a->min_eye_px = c->min_face_px / 2.25f;      /* face box width -> inter-eye distance */
+    g_mutex_unlock(&a->gal_lock);
+    overlay_set_tuning((float)c->overlay_offset_y, (float)c->overlay_scale_y, c->overlay_scores);
+}
+
+/* Not commissioned: the console's settings (and the legacy MatchThreshold field) are the whole story. */
+static void apply_local_only(app_ctx *a)
+{
+    g_mutex_lock(&a->gal_lock);
+    json_t *local = a->local_settings ? json_deep_copy(a->local_settings) : json_object();
+    double thr = a->threshold > 0 ? a->threshold : a->cfg.match_threshold;
+    g_mutex_unlock(&a->gal_lock);
+    pc_config prev, c;
+    pc_defaults(&prev, thr);
+    json_t *ap, *rj, *un;
+    pc_apply(local, &prev, thr, &c, &ap, &rj, &un);
+    json_decref(ap); json_decref(rj); json_decref(un); json_decref(local);
+    apply_effective(a, &c);
+    char modetxt[48];
+    snprintf(modetxt, sizeof modetxt, "%s", c.role == PC_ROLE_VIRTUAL_ACCESS ? "virtual access" : "watchlist");
+    metrics_recognition(c.match_threshold, c.min_face_px / 2.25, modetxt);
+}
+
+static json_t *settings_get_cb(void *user)
+{
+    app_ctx *a = user;
+    g_mutex_lock(&a->gal_lock);
+    pc_config eff = a->pcfg;
+    json_t *local = a->local_settings ? json_deep_copy(a->local_settings) : json_object();
+    gboolean managed = a->pharos_managed;
+    g_mutex_unlock(&a->gal_lock);
+    json_t *keys = managed ? pharos_managed_keys() : json_array();
+    json_t *d = settings_describe(&eff, local, keys, a->cfg.match_threshold);
+    json_object_set_new(d, "pharosManaged", json_boolean(managed));
+    json_decref(keys);
+    json_decref(local);
+    return d;
+}
+
+static int settings_set_cb(const json_t *values, char *why, size_t n, void *user)
+{
+    app_ctx *a = user;
+    g_mutex_lock(&a->gal_lock);
+    json_t *local = a->local_settings ? json_deep_copy(a->local_settings) : json_object();
+    gboolean managed = a->pharos_managed;
+    g_mutex_unlock(&a->gal_lock);
+    json_t *keys = managed ? pharos_managed_keys() : json_array();
+    json_t *next = settings_update(local, values, keys, a->cfg.match_threshold, why, n);
+    json_decref(keys);
+    json_decref(local);
+    if (!next) return -1;
+    if (settings_save(SETTINGS_PATH, next)) { json_decref(next); snprintf(why, n, "could not save on the camera"); return -1; }
+    g_mutex_lock(&a->gal_lock);
+    json_decref(a->local_settings);
+    a->local_settings = next;
+    g_mutex_unlock(&a->gal_lock);
+    pharos_set_local_settings(next);             /* commissioned: re-merged under Pharos on the next status */
+    if (!managed) apply_local_only(a);
+    return 0;
+}
+
 static void pharos_apply(const pc_config *c, long long rev, void *user)
 {
     app_ctx *a = user;
@@ -202,10 +272,8 @@ static void pharos_apply(const pc_config *c, long long rev, void *user)
     metrics_pharos(NULL, NULL, rev);
     g_mutex_lock(&a->gal_lock);
     a->pharos_managed = TRUE;
-    a->pcfg = *c;
-    a->threshold = (float)c->match_threshold;
-    a->min_eye_px = c->min_face_px / 2.25f;      /* face box width -> inter-eye distance */
     g_mutex_unlock(&a->gal_lock);
+    apply_effective(a, c);
     syslog(LOG_INFO, "pharos config: role %s, threshold %.2f, min face %d px, mode %s, %d zone(s)%s%s",
            pc_role_name(c->role), c->match_threshold, c->min_face_px, pc_mode_name(c->mode), c->nzones,
            c->time_zone[0] ? ", tz " : "", c->time_zone);
@@ -370,6 +438,7 @@ static gpointer pharos_restart_thread(gpointer data)
             char *v = param_get(a->params, "MatchThreshold");
             if (v) { on_param(".MatchThreshold", v, a); g_free(v); }
         }
+        apply_local_only(a);
         pharos_state_cb(PS_DISABLED, "enter Pharos URL, device ID and token", a);
     }
     explicit_bzero(s.token, sizeof s.token);
@@ -531,8 +600,14 @@ static gpointer worker(gpointer data)
         char device_id[80];
         snprintf(device_id, sizeof device_id, "%s", a->device_id);
         tp.lock_thr = a->threshold;
-        tp.keep_thr = a->threshold - 0.12f > 0.25f ? a->threshold - 0.12f : 0.25f;
+        tp.keep_thr = a->threshold - (float)pc.keep_margin > 0.20f ? a->threshold - (float)pc.keep_margin : 0.20f;
         tp.close_ms = pc.track_close_sec * 1000LL;
+        tp.lock_hits = pc.lock_frames;
+        tp.stranger_after = pc.stranger_frames;
+        tp.same_face = (float)pc.same_face;
+        tp.reverify_ms = pc.recheck_ms;
+        const unsigned max_f = (unsigned)pc.max_faces < max_faces ? (unsigned)pc.max_faces : max_faces;
+        const unsigned per_frame = pc.identify_per_frame > 0 ? (unsigned)pc.identify_per_frame : cfg->max_embed_per_frame;
         a->stream_ok = TRUE;
         if (++fps_frames >= 20) {
             double t = now_s();
@@ -544,7 +619,7 @@ static gpointer worker(gpointer data)
         tracker_set_params(&tr, &tp);
 
         g_mutex_lock(&a->model_lock);             /* shared with on-camera enrolment */
-        int n = detect_faces(a->det, &frame, faces, (int)max_faces, cfg->detect_threshold);
+        int n = detect_faces(a->det, &frame, faces, (int)max_f, (float)pc.min_detect_score);
         double t2 = now_s();
         acc(&t_cap, (t1 - t0) * 1e3);
         acc(&t_det, (t2 - t1) * 1e3);
@@ -561,17 +636,25 @@ static gpointer worker(gpointer data)
         int tix[AURIX_MAX_FACES];
         for (int i = 0; i < n; i++) { boxes[i][0] = faces[i].x0; boxes[i][1] = faces[i].y0; boxes[i][2] = faces[i].x1; boxes[i][3] = faces[i].y1; }
         tracker_associate(&tr, (const float (*)[4])boxes, n, now, tix);
+        float yaw[AURIX_MAX_FACES], pitch[AURIX_MAX_FACES];
+        for (int i = 0; i < n; i++) {                /* outline on the face itself, and head pose */
+            float fcx, fcy, frx, fry;
+            landmarks_face_ellipse(&faces[i].lm, &fcx, &fcy, &frx, &fry);
+            landmarks_pose(&faces[i].lm, &yaw[i], &pitch[i]);
+            if (tix[i] >= 0) tracker_set_face(&tr, tix[i], fcx, fcy, frx, fry, yaw[i], pitch[i]);
+        }
 
         /* 2. identify only what needs it: undecided tracks first, then periodic re-checks of known ones */
         int order[AURIX_MAX_FACES], no = 0, f_gated = 0, f_emb = 0;
         for (int want = 2; want >= 1; want--)
             for (int i = 0; i < n; i++)
                 if (tix[i] >= 0 && landmarks_eye_distance(&faces[i].lm) >= min_eye &&
+                    fabsf(yaw[i]) <= pc.max_yaw_deg && fabsf(pitch[i]) <= pc.max_pitch_deg &&   /* too turned: track, don't identify */
                     tracker_wants_embed(&tr, tix[i], now) == want) order[no++] = i;
         for (int i = 0; i < n; i++) f_gated += landmarks_eye_distance(&faces[i].lm) >= min_eye;
         faces_gated += (unsigned)f_gated;
         int splits[AURIX_MAX_FACES], nsplit = 0;
-        for (int k = 0; k < no && a->emb && k < (int)cfg->max_embed_per_frame; k++) {
+        for (int k = 0; k < no && a->emb && k < (int)per_frame; k++) {
             int i = order[k], ti = tix[i];
             double e0 = now_s();
             if (align_face(&frame, &faces[i].lm, &face)) continue;
@@ -638,6 +721,10 @@ static gpointer worker(gpointer data)
             overlay_box *bx = &ob[nob++];
             bx->x0 = t->x0 / frame.w; bx->x1 = t->x1 / frame.w;
             bx->y0 = t->y0 / frame.h; bx->y1 = t->y1 / frame.h;
+            if (t->has_face_geo) {
+                bx->cx = t->fcx / frame.w; bx->cy = t->fcy / frame.h;
+                bx->rx = t->frx / frame.w; bx->ry = t->fry / frame.h;
+            }
             if (t->state == TS_PENDING) {
                 bx->state = OV_PENDING;
                 bx->confidence = 0.3f;
@@ -649,7 +736,10 @@ static gpointer worker(gpointer data)
                 int threat = t->category == AURIX_CAT_THREAT, concern = t->category == AURIX_CAT_CONCERN;
                 bx->state = threat ? OV_THREAT : concern ? OV_CONCERN : OV_ALLOW;
                 bx->confidence = t->score >= tp.lock_thr ? 1.0f : 0.65f;
-                snprintf(bx->label, sizeof bx->label, "%s%s", threat ? "THREAT: " : concern ? "CONCERN: " : "", t->name);
+                if (pc.overlay_scores)
+                    snprintf(bx->label, sizeof bx->label, "%s%s %.2f", threat ? "THREAT: " : concern ? "CONCERN: " : "", t->name, t->score);
+                else
+                    snprintf(bx->label, sizeof bx->label, "%s%s", threat ? "THREAT: " : concern ? "CONCERN: " : "", t->name);
                 if (va && !threat && t->ref[0]) {           /* virtual access: show the decision */
                     g_mutex_lock(&a->gal_lock);
                     const struct acc_person *ap = a->nacc ? bsearch(t->ref, a->acc, (size_t)a->nacc, sizeof *a->acc, cmp_acc) : NULL;
@@ -667,9 +757,9 @@ static gpointer worker(gpointer data)
             }
         }
         g_mutex_lock(&a->gal_lock);
-        gboolean show = a->overlay_on;
+        gboolean show = a->overlay_on && pc.overlay_enabled;
         g_mutex_unlock(&a->gal_lock);
-        if (show) overlay_publish(ob, nob);
+        overlay_publish(ob, show ? nob : 0);        /* switching off clears what was drawn */
 
         if (++frames % cfg->stats_every == 0) {
             int active = 0;
@@ -715,6 +805,9 @@ int main(void)
     a.min_eye_px = (float)a.cfg.min_eye_px;
     pc_defaults(&a.pcfg, a.cfg.match_threshold);
     a.acc_policies = json_array();
+    a.local_settings = settings_load(SETTINGS_PATH);
+    pharos_set_local_settings(a.local_settings);
+    if (json_object_size(a.local_settings)) syslog(LOG_INFO, "settings: %zu set on this camera", json_object_size(a.local_settings));
     a.threshold = a.cfg.match_threshold;
     a.overlay_on = TRUE;
     a.file_gallery_path = (char *)a.cfg.gallery_path;
@@ -784,7 +877,8 @@ int main(void)
         }
         g_timeout_add_seconds(5, metrics_tick, NULL);
         static web_commissioning wc;
-        wc = (web_commissioning){ AURIX_APP_DIR "/localdata/pharos", web_status_cb, web_changed_cb, &a };
+        wc = (web_commissioning){ AURIX_APP_DIR "/localdata/pharos", web_status_cb, web_changed_cb, &a,
+                                  settings_get_cb, settings_set_cb };
         web_start(AURIX_APP_DIR "/web/dashboard.html", &wc);
     }
     if (a.params) pharos_restart_thread(&a);          /* initial start (synchronous, no client yet) */
@@ -792,7 +886,20 @@ int main(void)
     /* fontconfig (used by cairo text) needs a writable cache dir */
     g_setenv("XDG_CACHE_HOME", AURIX_APP_DIR "/localdata", TRUE);
     overlay_init();
-    a.cap = a.det ? capture_open(a.cfg.width, a.cfg.height, a.cfg.fps) : NULL;
+    {
+        int sw, sh;
+        unsigned cw = a.cfg.width, ch = a.cfg.height;
+        overlay_capture_size(&sw, &sh);
+        if (sw > 0 && sh > 0 && fabs((double)sw / sh - (double)cw / ch) > 0.02) {
+            cw = ((unsigned)((double)ch * sw / sh + 8) / 16) * 16;     /* e.g. 4:3 sensor -> 1440x1080 */
+            syslog(LOG_INFO, "capture: sensor is %dx%d - analysing %ux%u (full view, same shape)", sw, sh, cw, ch);
+        }
+        a.cap = a.det ? capture_open(cw, ch, a.cfg.fps) : NULL;
+        if (!a.cap && a.det && (cw != a.cfg.width)) {
+            syslog(LOG_WARNING, "capture: %ux%u refused - falling back to %ux%u (outlines may sit off the faces)", cw, ch, a.cfg.width, a.cfg.height);
+            a.cap = capture_open(a.cfg.width, a.cfg.height, a.cfg.fps);
+        }
+    }
 
     GThread *th = NULL;
     if (a.det && a.cap) {

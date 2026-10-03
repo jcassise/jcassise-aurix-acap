@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Step-1 protocol scenarios: real AURIX client (harness) against sim_lite. Exit 0 = all pass."""
-import os, shutil, subprocess, sys, tempfile, time
+import json, os, shutil, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sim_lite import Sim
 
@@ -124,6 +124,21 @@ out, _ = run(fake, 1.5)
 srv.close()
 detail = [l for l in out.splitlines() if l.startswith("STATE Pharos unreachable")]
 check("T3 TLS failure reason is reported in detail", any(":" in l.split("|", 1)[1] and len(l.split("|", 1)[1]) > len("SSL connect error") for l in detail), str(detail[:1]))
+
+# L1 settings from the camera's console merge under Pharos's keys
+sim = fresh()
+sim.set_config({"recognition.matchThreshold": 0.5, "events.trackCloseSec": 5})
+os.environ["AURIX_TEST_LOCAL_SETTINGS"] = json.dumps({"recognition.matchThreshold": 0.6, "tracking.sameFace": 0.4,
+                                                      "overlay.offsetY": -0.03})
+out, _ = run(sim, 1.5)
+del os.environ["AURIX_TEST_LOCAL_SETTINGS"]
+st = [j for (pth, _s, j) in sim.log if pth.endswith("/status") and j]
+ac = st[-1]["appliedConfig"] if st else {}
+check("L1 Pharos key wins over the local value", ac.get("recognition.matchThreshold") == 0.5, str(ac.get("recognition.matchThreshold")))
+check("L1 local-only settings are in force and reported", ac.get("tracking.sameFace") == 0.4 and ac.get("overlay.offsetY") == -0.03,
+      f"{ac.get('tracking.sameFace')} {ac.get('overlay.offsetY')}")
+check("L1 new keys are understood (not unsupported)", not st[-1].get("unsupportedConfig"), str(st[-1].get("unsupportedConfig")))
+sim.stop()
 
 # S2f PEM pasted into a one-line field (newlines lost) still works
 sim = fresh()

@@ -12,6 +12,7 @@ typedef struct {
     float x0, y0, x1, y1;          /* normalised 0..1 in the analysed frame */
     overlay_state state;
     float confidence;              /* 0..1: how settled the identity is (drawn as strength) */
+    float cx, cy, rx, ry;          /* face ellipse from the landmarks (normalised); ry <= 0 = use the box */
     char label[AURIX_ID_LEN + 24];
 } overlay_box;
 
@@ -26,5 +27,11 @@ void overlay_publish(const overlay_box *boxes, int n);
 
 /* Average drawing time per render since the last call, and how many renders (main loop only). */
 void overlay_stats(double *avg_render_ms, unsigned *renders);
+
+/* Full sensor (capture) size, as the overlay system reports it. 0 if the overlay is unavailable. */
+void overlay_capture_size(int *w, int *h);
+
+/* Fine-tuning per camera: y' = 0.5 + (y - 0.5) * scale_y + offset_y (normalised); scores on labels. */
+void overlay_set_tuning(float offset_y, float scale_y, int show_scores);
 
 #endif

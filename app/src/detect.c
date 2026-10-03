@@ -1,6 +1,7 @@
 #include "detect.h"
 #include "infer.h"
 #include <stdlib.h>
+#include <string.h>
 #include <syslog.h>
 
 #define NMS_IOU 0.3f
@@ -72,10 +73,16 @@ int detect_faces(aurix_detector *d, const aurix_image *frame, aurix_face *out, i
     uint8_t *in = model_input(d->model, 0, &bytes);
     if (!in || bytes < d->in_pitch * (size_t)h) return -1;
 
-    /* Full-frame stretch to the model size (1080p -> 640x352 is ~3x). With the 40 px
-     * inter-eye gate at 1080p, gated faces are ~30 px in model space - well inside
-     * YuNet's range. Tiling comes later for higher capture resolutions. */
-    aurix_image dst = { in, w, h, (int)d->in_pitch, 3 };
+    /* Fit the whole frame into the model input without distorting faces (letterbox): a 4:3
+     * frame on a 4:3 camera keeps its shape and the spare width is padded. With the 40 px
+     * inter-eye gate at 1080p, gated faces are ~30 px in model space - well inside YuNet's range. */
+    float s = (float)w / frame->w < (float)h / frame->h ? (float)w / frame->w : (float)h / frame->h;
+    int dw = (int)(frame->w * s + 0.5f), dh = (int)(frame->h * s + 0.5f);
+    if (dw > w) dw = w;
+    if (dh > h) dh = h;
+    if (dw < w || dh < h)
+        for (int y = 0; y < h; y++) memset(in + (size_t)y * d->in_pitch, 0, (size_t)w * 3);
+    aurix_image dst = { in, dw, dh, (int)d->in_pitch, 3 };
     resize_bilinear(frame, &dst);
 
     if (model_run(d->model)) return -1;
@@ -83,7 +90,7 @@ int detect_faces(aurix_detector *d, const aurix_image *frame, aurix_face *out, i
         d->outputs[i] = model_output(d->model, i, NULL);
     int n = yunet_decode(&d->meta, d->outputs, out, max, threshold, NMS_IOU);
 
-    const float sx = (float)frame->w / w, sy = (float)frame->h / h;
+    const float sx = (float)frame->w / dw, sy = (float)frame->h / dh;
     for (int i = 0; i < n; i++) {
         out[i].x0 *= sx; out[i].x1 *= sx;
         out[i].y0 *= sy; out[i].y1 *= sy;

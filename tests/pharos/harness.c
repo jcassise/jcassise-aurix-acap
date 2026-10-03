@@ -125,6 +125,11 @@ int main(int argc, char **argv)
     s.default_threshold = 0.45;
     s.max_people = 20000;
     pharos_hooks h = { on_apply, on_snapshot, on_state, on_cmd, on_enroll, on_people, NULL };
+    if (getenv("AURIX_TEST_LOCAL_SETTINGS")) {           /* settings saved on the camera's console */
+        json_t *ls = json_loads(getenv("AURIX_TEST_LOCAL_SETTINGS"), 0, NULL);
+        pharos_set_local_settings(ls);
+        json_decref(ls);
+    }
     pharos *p = pharos_start(&s, &h);
     if (getenv("AURIX_TEST_EVENTS")) push_test_events(s.device_id, atoi(getenv("AURIX_TEST_EVENTS")), !getenv("AURIX_TEST_NO_SCENE"));
     usleep((useconds_t)(atof(argv[6]) * 1e6));

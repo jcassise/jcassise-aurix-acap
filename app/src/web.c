@@ -123,7 +123,20 @@ web_reply web_route(const web_request *rq, const char *html_path, const web_comm
         if (!wc || !wc->state_dir) return json_error(503, "commissioning unavailable");
         return post ? commission_post(rq, wc) : json_reply(200, commission_view(wc));
     }
-    if (post) return json_error(405, "POST is only accepted for ?commission");
+    if (has_query_key(rq->uri, "settings")) {
+        if (!wc || !wc->settings_get) return json_error(503, "settings unavailable");
+        if (post) {
+            if (!rq->csrf_header) return json_error(403, "missing X-AURIX-Request header");
+            json_t *in = rq->body && rq->body_len <= 65536 ? json_loadb(rq->body, rq->body_len, 0, NULL) : NULL;
+            char why[200] = "";
+            int rc = in && wc->settings_set ? wc->settings_set(in, why, sizeof why, wc->user) : -1;
+            json_decref(in);
+            if (rc) return json_error(422, why[0] ? why : "body must be a JSON object of settings");
+            syslog(LOG_INFO, "web: settings saved from the AURIX page");
+        }
+        return json_reply(200, wc->settings_get(wc->user));
+    }
+    if (post) return json_error(405, "POST is only accepted for ?commission and ?settings");
     if (has_query_key(rq->uri, "data")) {
         json_t *m = metrics_json();
         r.body = json_dumps(m, JSON_COMPACT);

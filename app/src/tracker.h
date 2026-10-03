@@ -56,6 +56,9 @@ typedef struct {
     int unsure;                   /* re-check every frame: reattached after a gap or by distance, or doubtful */
     int different;                /* consecutive checks where the face did not match the print */
     float last_self;              /* similarity of the last check to the print (diagnostics) */
+    float fcx, fcy, frx, fry;     /* face ellipse from the landmarks (frame pixels, smoothed) */
+    int has_face_geo;
+    float yaw_deg, pitch_deg;     /* estimated head pose of the latest face */
 } trk_track;
 
 typedef struct {
@@ -71,6 +74,9 @@ void tracker_set_params(tracker *tr, const trk_params *p);
 
 /* boxes[i] = {x0,y0,x1,y1}; out_track[i] = track index (new tracks are created as needed; -1 if full). */
 void tracker_associate(tracker *tr, const float (*boxes)[4], int n, long long now_ms, int *out_track);
+
+/* Face ellipse (from the landmarks) and estimated head pose for track ti, this frame. */
+void tracker_set_face(tracker *tr, int ti, float cx, float cy, float rx, float ry, float yaw_deg, float pitch_deg);
 
 /* Should track ti be embedded this frame? 2 = needs identity, 1 = due for re-verification, 0 = no. */
 int tracker_wants_embed(const tracker *tr, int ti, long long now_ms);

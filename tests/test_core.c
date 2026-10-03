@@ -581,6 +581,35 @@ static void test_linger_one_event(void)
     CHECK(opens == 1 && closes == 1 && splits == 0, "linger: %d opens, %d closes, %d splits", opens, closes, splits);
 }
 
+static void test_face_geometry(void)
+{
+    /* the reference (frontal) face, in 112x112 template coordinates */
+    aurix_landmarks lm = { { 38.2946f, 73.5318f, 56.0252f, 41.5493f, 70.7299f }, { 51.6963f, 51.5014f, 71.7366f, 92.3655f, 92.2041f } };
+    float yaw, pitch, cx, cy, rx, ry;
+    landmarks_pose(&lm, &yaw, &pitch);
+    CHECK(fabsf(yaw) < 3 && fabsf(pitch) < 3, "frontal face pose %.1f/%.1f", yaw, pitch);
+    landmarks_face_ellipse(&lm, &cx, &cy, &rx, &ry);
+    CHECK(fabsf(cx - 56) < 2 && fabsf(cy - 67.9f) < 1.5f && fabsf(ry - 61) < 2 && rx > 0.55f * ry && rx < 0.8f * ry,
+          "frontal ellipse centre %.1f,%.1f radii %.1f,%.1f", cx, cy, rx, ry);
+    /* the ellipse centre sits above the box centre the old outline used (the cause of 'a little low') */
+    CHECK(cy < (51.6f + 92.3f) / 2, "ellipse not above the eye-mouth midpoint");
+    /* nose shifted toward image right = turned right */
+    aurix_landmarks t = lm;
+    t.x[2] += 12;
+    landmarks_pose(&t, &yaw, &pitch);
+    CHECK(yaw > 25 && yaw < 45, "turned face yaw %.1f", yaw);
+    /* nose lower between eyes and mouth = looking down */
+    t = lm; t.y[2] += 8;
+    landmarks_pose(&t, &yaw, &pitch);
+    CHECK(pitch > 20 && fabsf(yaw) < 5, "tilted face pitch %.1f yaw %.1f", pitch, yaw);
+    /* a rolled (tilted sideways) frontal face is still frontal */
+    t = lm;
+    float c = cosf(0.4f), sn = sinf(0.4f);
+    for (int k = 0; k < 5; k++) { float x = lm.x[k] - 56, y = lm.y[k] - 70; t.x[k] = 56 + c * x - sn * y; t.y[k] = 70 + sn * x + c * y; }
+    landmarks_pose(&t, &yaw, &pitch);
+    CHECK(fabsf(yaw) < 4 && fabsf(pitch) < 4, "rolled frontal face pose %.1f/%.1f", yaw, pitch);
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -601,6 +630,7 @@ int main(void)
     test_linger_one_event();
     test_photo_swap(0);
     test_photo_swap(1);
+    test_face_geometry();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

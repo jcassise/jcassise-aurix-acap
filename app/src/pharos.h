@@ -52,6 +52,12 @@ typedef struct {
     void *user;
 } pharos_hooks;
 
+/* Settings from the camera's own console: the base under Pharos's keys (Pharos wins where it sends a
+ * key). Takes effect on the next status cycle, or immediately for a device that is not commissioned. */
+void pharos_set_local_settings(const json_t *local);
+/* Keys Pharos currently manages (sent in its last config): [key]. Caller owns the result. */
+json_t *pharos_managed_keys(void);
+
 /* Pharos time minus camera time, from serverTime in /hello and status replies (0 = unknown). */
 long long pharos_clock_offset_ms(void);
 

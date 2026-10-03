@@ -74,7 +74,7 @@ void tracker_associate(tracker *tr, const float (*boxes)[4], int n, long long no
         used_det[bd] = 1;
         trk_track *t = &tr->t[bt];
         const float *b = boxes[bd];
-        const float a = 0.6f;                         /* box smoothing */
+        const float a = 0.75f;                        /* box smoothing: responsive, still steady */
         t->x0 = a * b[0] + (1 - a) * t->x0; t->y0 = a * b[1] + (1 - a) * t->y0;
         t->x1 = a * b[2] + (1 - a) * t->x1; t->y1 = a * b[3] + (1 - a) * t->y1;
         if (best <= 0.15f || t->misses > 0) t->unsure = 1;    /* reattached by distance or after a gap */
@@ -102,6 +102,19 @@ void tracker_associate(tracker *tr, const float (*boxes)[4], int n, long long no
     }
     for (int k = 0; k < TRK_MAX; k++)
         if (tr->t[k].active && !tr->t[k].seen_now) tr->t[k].misses++;
+}
+
+void tracker_set_face(tracker *tr, int ti, float cx, float cy, float rx, float ry, float yaw, float pitch)
+{
+    trk_track *t = &tr->t[ti];
+    const float a = 0.75f;
+    if (!t->has_face_geo) { t->fcx = cx; t->fcy = cy; t->frx = rx; t->fry = ry; t->has_face_geo = 1; }
+    else {
+        t->fcx = a * cx + (1 - a) * t->fcx; t->fcy = a * cy + (1 - a) * t->fcy;
+        t->frx = a * rx + (1 - a) * t->frx; t->fry = a * ry + (1 - a) * t->fry;
+    }
+    t->yaw_deg = yaw;
+    t->pitch_deg = pitch;
 }
 
 int tracker_wants_embed(const tracker *tr, int ti, long long now)

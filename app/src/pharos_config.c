@@ -24,6 +24,20 @@ void pc_defaults(pc_config *c, double thr)
     c->keep_all_people = true;
     c->max_delta_age_sec = 1296000;
     c->download_photos = true;
+    c->min_detect_score = 0.6;
+    c->max_faces = 8;
+    c->identify_per_frame = 0;
+    c->max_yaw_deg = 50;
+    c->max_pitch_deg = 40;
+    c->lock_frames = 2;
+    c->stranger_frames = 3;
+    c->recheck_ms = 1000;
+    c->keep_margin = 0.12;
+    c->same_face = 0.30;
+    c->overlay_enabled = true;
+    c->overlay_scores = false;
+    c->overlay_offset_y = 0.0;
+    c->overlay_scale_y = 1.0;
 }
 
 static void reject(json_t *rej, const char *key, const char *reason)
@@ -82,6 +96,8 @@ void pc_apply(const json_t *desired, const pc_config *prev, double thr, pc_confi
         BOOLKEY("sync.keepAllPeople", keep_all_people)
         BOOLKEY("sync.downloadPhotos", download_photos)
         BOOLKEY("access.reportDecisions", report_decisions)
+        BOOLKEY("overlay.enabled", overlay_enabled)
+        BOOLKEY("overlay.showScores", overlay_scores)
 #undef BOOLKEY
 #define INTKEY(K, F, LO, HI)                                            \
         if (!strcmp(key, K)) {                                          \
@@ -96,7 +112,29 @@ void pc_apply(const json_t *desired, const pc_config *prev, double thr, pc_confi
         INTKEY("events.trackCloseSec", track_close_sec, 1, 600)
         INTKEY("sync.intervalMs", sync_interval_ms, 500, 3600000)
         INTKEY("sync.maxDeltaAgeSec", max_delta_age_sec, 0, 315360000)
+        INTKEY("recognition.maxFaces", max_faces, 1, 16)
+        INTKEY("recognition.identifyPerFrame", identify_per_frame, 0, 8)
+        INTKEY("recognition.maxYawDeg", max_yaw_deg, 15, 90)
+        INTKEY("recognition.maxPitchDeg", max_pitch_deg, 15, 90)
+        INTKEY("tracking.lockFrames", lock_frames, 1, 5)
+        INTKEY("tracking.strangerFrames", stranger_frames, 2, 10)
+        INTKEY("tracking.recheckMs", recheck_ms, 200, 10000)
 #undef INTKEY
+#define REALKEY(K, F, LO, HI)                                           \
+        if (!strcmp(key, K)) {                                          \
+            if (!json_is_number(v)) { reject(rej, key, "expected number"); o->F = prev->F; } \
+            else if (json_number_value(v) < (LO) || json_number_value(v) > (HI)) { \
+                snprintf(why, sizeof why, "out of range %g..%g", (double)(LO), (double)(HI)); \
+                reject(rej, key, why); o->F = prev->F; }                \
+            else o->F = json_number_value(v);                           \
+            continue;                                                   \
+        }
+        REALKEY("recognition.minDetectScore", min_detect_score, 0.3, 0.95)
+        REALKEY("tracking.keepMargin", keep_margin, 0.0, 0.3)
+        REALKEY("tracking.sameFace", same_face, 0.15, 0.6)
+        REALKEY("overlay.offsetY", overlay_offset_y, -0.2, 0.2)
+        REALKEY("overlay.scaleY", overlay_scale_y, 0.7, 1.3)
+#undef REALKEY
         if (!strcmp(key, "recognition.matchThreshold")) {
             if (!json_is_number(v)) { reject(rej, key, "expected number"); o->match_threshold = prev->match_threshold; }
             else {
@@ -181,5 +219,21 @@ json_t *pc_to_json(const pc_config *c)
     json_object_set_new(o, "sync.maxDeltaAgeSec", json_integer(c->max_delta_age_sec));
     json_object_set_new(o, "sync.downloadPhotos", json_boolean(c->download_photos));
     json_object_set_new(o, "access.reportDecisions", json_boolean(c->report_decisions));
+#define R3(v) json_real((double)(long long)((v) * 1000 + ((v) >= 0 ? 0.5 : -0.5)) / 1000.0)
+    json_object_set_new(o, "recognition.minDetectScore", R3(c->min_detect_score));
+    json_object_set_new(o, "recognition.maxFaces", json_integer(c->max_faces));
+    json_object_set_new(o, "recognition.identifyPerFrame", json_integer(c->identify_per_frame));
+    json_object_set_new(o, "recognition.maxYawDeg", json_integer(c->max_yaw_deg));
+    json_object_set_new(o, "recognition.maxPitchDeg", json_integer(c->max_pitch_deg));
+    json_object_set_new(o, "tracking.lockFrames", json_integer(c->lock_frames));
+    json_object_set_new(o, "tracking.strangerFrames", json_integer(c->stranger_frames));
+    json_object_set_new(o, "tracking.recheckMs", json_integer(c->recheck_ms));
+    json_object_set_new(o, "tracking.keepMargin", R3(c->keep_margin));
+    json_object_set_new(o, "tracking.sameFace", R3(c->same_face));
+    json_object_set_new(o, "overlay.enabled", json_boolean(c->overlay_enabled));
+    json_object_set_new(o, "overlay.showScores", json_boolean(c->overlay_scores));
+    json_object_set_new(o, "overlay.offsetY", R3(c->overlay_offset_y));
+    json_object_set_new(o, "overlay.scaleY", R3(c->overlay_scale_y));
+#undef R3
     return o;
 }

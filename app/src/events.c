@@ -54,8 +54,12 @@ json_t *event_build(const trk_track *t, int revision, int ended, long long now, 
             "policyId", c->access.policy_id[0] ? json_string(c->access.policy_id) : json_null()));
     else
         json_object_set_new(e, "access", json_pack("{s:b,s:n,s:n,s:n}", "evaluated", 0, "decision", "reason", "policyId"));
-    json_object_set_new(e, "face", json_pack("{s:o,s:i}", "quality", r2(t->best_quality > 1 ? 1 : t->best_quality),
-                                             "sizePx", t->face_px));
+    json_t *face = json_pack("{s:o,s:i}", "quality", r2(t->best_quality > 1 ? 1 : t->best_quality), "sizePx", t->face_px);
+    if (t->has_face_geo) {                                  /* estimated from the landmarks */
+        json_object_set_new(face, "yawDeg", json_integer((json_int_t)(t->yaw_deg >= 0 ? t->yaw_deg + 0.5f : t->yaw_deg - 0.5f)));
+        json_object_set_new(face, "pitchDeg", json_integer((json_int_t)(t->pitch_deg >= 0 ? t->pitch_deg + 0.5f : t->pitch_deg - 0.5f)));
+    }
+    json_object_set_new(e, "face", face);
     json_object_set_new(e, "images", json_pack("{s:b,s:b}", "face", c->has_face, "scene", c->has_scene));
     return e;
 }

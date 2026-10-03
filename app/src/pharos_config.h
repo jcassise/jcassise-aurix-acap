@@ -27,6 +27,17 @@ typedef struct {
     long long max_delta_age_sec;
     bool download_photos;
     bool report_decisions;
+    /* recognition tuning */
+    double min_detect_score;         /* recognition.minDetectScore: detector confidence to count a face */
+    int max_faces;                   /* recognition.maxFaces: faces handled per frame */
+    int identify_per_frame;          /* recognition.identifyPerFrame: 0 = this camera's default */
+    int max_yaw_deg, max_pitch_deg;  /* recognition.maxYawDeg / maxPitchDeg: identify only faces turned less */
+    /* tracking */
+    int lock_frames, stranger_frames, recheck_ms;
+    double keep_margin, same_face;
+    /* live-view overlay */
+    bool overlay_enabled, overlay_scores;
+    double overlay_offset_y, overlay_scale_y;
 } pc_config;
 
 /* AURIX defaults (a key Pharos omits means "device default"). */

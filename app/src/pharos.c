@@ -47,9 +47,48 @@ struct pharos {
     int status_interval_ms;
     unsigned long long cpu_prev_total, cpu_prev_idle;
     sync_ctx *sync;
+    json_t *desired;              /* last config Pharos sent (to re-merge when local settings change) */
 };
 
 static volatile long long g_clock_offset_ms;
+
+/* Local settings (from the camera's console): the base that Pharos's keys override. */
+static pthread_mutex_t g_local_mu = PTHREAD_MUTEX_INITIALIZER;
+static json_t *g_local;          /* {key: value} */
+static json_t *g_managed;        /* keys Pharos sent last: [key] */
+static volatile int g_local_dirty;
+
+void pharos_set_local_settings(const json_t *local)
+{
+    pthread_mutex_lock(&g_local_mu);
+    json_decref(g_local);
+    g_local = local ? json_deep_copy(local) : json_object();
+    g_local_dirty = 1;
+    pthread_mutex_unlock(&g_local_mu);
+}
+
+json_t *pharos_managed_keys(void)
+{
+    pthread_mutex_lock(&g_local_mu);
+    json_t *k = g_managed ? json_deep_copy(g_managed) : json_array();
+    pthread_mutex_unlock(&g_local_mu);
+    return k;
+}
+
+/* local settings with Pharos's keys on top; remembers which keys Pharos manages */
+static json_t *merged_config(const json_t *desired)
+{
+    pthread_mutex_lock(&g_local_mu);
+    json_t *m = g_local ? json_deep_copy(g_local) : json_object();
+    json_decref(g_managed);
+    g_managed = json_array();
+    const char *k;
+    json_t *v;
+    if (json_is_object(desired)) json_object_foreach((json_t *)desired, k, v) json_array_append_new(g_managed, json_string(k));
+    pthread_mutex_unlock(&g_local_mu);
+    if (json_is_object(desired)) json_object_update(m, (json_t *)desired);
+    return m;
+}
 long long pharos_clock_offset_ms(void) { return g_clock_offset_ms; }
 
 static long long now_ms(void)
@@ -124,12 +163,21 @@ int pharos_load_saved_config(const char *dir, double thr, pc_config *out, long l
     json_t *root = json_load_file(path, 0, NULL);
     pc_defaults(out, thr);
     *rev = 0;
-    if (!root) return -1;
-    json_t *cfg = json_object_get(root, "config");
+    json_t *cfg = root ? json_object_get(root, "config") : NULL;
+    if (!cfg) {                                    /* nothing from Pharos yet: local settings only */
+        pc_config prev = *out;
+        json_t *a, *r, *u, *m = merged_config(NULL);
+        pc_apply(m, &prev, thr, out, &a, &r, &u);
+        json_decref(m); json_decref(a); json_decref(r); json_decref(u);
+        json_decref(root);
+        return root ? 0 : -1;
+    }
     if (cfg) {
         pc_config prev = *out;
         json_t *a, *r, *u;
-        pc_apply(cfg, &prev, thr, out, &a, &r, &u);
+        json_t *m = merged_config(cfg);
+        pc_apply(m, &prev, thr, out, &a, &r, &u);
+        json_decref(m);
         json_decref(a); json_decref(r); json_decref(u);
         *rev = json_integer_value(json_object_get(root, "configRevision"));
     }
@@ -338,8 +386,13 @@ static void apply_config(pharos *p, long long rev, json_t *desired)
 {
     pc_config next;
     json_t *a, *r, *u;
-    pc_apply(desired, &p->cfg, p->s.default_threshold, &next, &a, &r, &u);
-    int changed = memcmp(&next, &p->cfg, sizeof next) != 0 || rev != p->config_rev;
+    json_decref(p->desired);
+    p->desired = desired ? json_deep_copy(desired) : json_object();
+    json_t *m = merged_config(desired);
+    pc_apply(m, &p->cfg, p->s.default_threshold, &next, &a, &r, &u);
+    json_decref(m);
+    int changed = memcmp(&next, &p->cfg, sizeof next) != 0 || rev != p->config_rev || g_local_dirty;
+    g_local_dirty = 0;
     json_decref(p->applied); json_decref(p->rejected); json_decref(p->unsupported);
     p->applied = a; p->rejected = r; p->unsupported = u;
     p->cfg = next;
@@ -502,6 +555,7 @@ static void *run(void *arg)
         /* ---- connected: status loop ---- */
         long long interval = p->status_interval_ms;
         while (!p->stop) {
+            if (g_local_dirty) apply_config(p, p->config_rev, p->desired);
             json_t *req = build_status(p, results);
             results = json_array();
             long long t0 = now_ms();
@@ -570,6 +624,16 @@ pharos *pharos_start(const pharos_settings *s, const pharos_hooks *h)
     pthread_cond_init(&p->cv, NULL);
     mkdir(s->state_dir, 0700);
     pharos_load_saved_config(s->state_dir, s->default_threshold, &p->cfg, &p->config_rev);
+    {   /* remember Pharos's last keys so a local change re-merges under them */
+        char sp[300];
+        state_path(s->state_dir, sp, sizeof sp);
+        json_t *root = json_load_file(sp, 0, NULL);
+        json_t *c = root ? json_object_get(root, "config") : NULL;
+        p->desired = c ? json_deep_copy(c) : json_object();
+        json_t *m = merged_config(c);              /* also records the managed keys */
+        json_decref(m);
+        json_decref(root);
+    }
     json_t *a, *r, *u;
     pc_config tmp;
     pc_apply(NULL, &p->cfg, s->default_threshold, &tmp, &a, &r, &u);
@@ -603,6 +667,7 @@ void pharos_stop(pharos *p)
     pthread_mutex_unlock(&p->mu);
     if (p->th) pthread_join(p->th, NULL);
     sync_free(p->sync);
+    json_decref(p->desired);
     ph_client_free(p->http);
     json_decref(p->applied); json_decref(p->rejected); json_decref(p->unsupported);
     explicit_bzero(p->s.token, sizeof p->s.token);

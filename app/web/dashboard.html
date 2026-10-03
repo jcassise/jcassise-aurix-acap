@@ -105,6 +105,21 @@ td.num, th.num { text-align: right; }
 .limit.binding .track b { background: var(--signal); }
 .fine { color: var(--muted); font-size: 12px; margin: 14px 0 0; max-width: 90ch; }
 @media (prefers-reduced-motion: reduce) { .track b { transition: none; } }
+.settings { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
+.sgroup { margin: 0 0 18px; }
+.sgroup h3 { font-size: 15px; margin: 0 0 8px; }
+.srows { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px 34px; }
+.srow { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.srow label { font-weight: 600; font-size: 14px; }
+.srow .ctl { display: flex; align-items: center; gap: 6px; }
+.srow input[type=number] { width: 6.5em; font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.srow select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.srow small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.badge.pharos { color: var(--signal); border-color: var(--signal); }
+.badge.local { color: var(--ok); border-color: var(--ok); }
+.srow .reset { font-size: 12px; color: var(--muted); background: none; border: none; text-decoration: underline; cursor: pointer; padding: 0; }
+.srow.changed { background: color-mix(in srgb, var(--signal) 8%, transparent); }
 .connect { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
 .connect form { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px 34px; max-width: 980px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
@@ -227,6 +242,17 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
     <p class="empty" id="recentEmpty">No matches yet. Enrolled people appear here when the camera recognises them.</p>
   </section>
 
+
+
+  <section class="settings" id="settings" aria-labelledby="setTitle">
+    <h2 id="setTitle">Settings</h2>
+    <p class="cap-sub" id="setNote">Loading…</p>
+    <div id="setGroups"></div>
+    <div class="actions">
+      <button class="primary" type="button" id="setSave" disabled>Save changes</button>
+      <p class="result" id="setResult" aria-live="polite"></p>
+    </div>
+  </section>
 
   <section class="connect" id="connect" aria-labelledby="connTitle">
     <h2 id="connTitle">Pharos connection</h2>
@@ -483,6 +509,75 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
   }
 
 
+
+  /* ---------------- settings ---------------- */
+  var setChanges = {};
+  function setResult(t, cls) { set("setResult", t, "result " + (cls || "")); }
+  function fmtVal(v) { return typeof v === "number" ? (Math.round(v * 1000) / 1000) : v; }
+  function renderSettings(d) {
+    var box = $("setGroups"); box.textContent = ""; setChanges = {};
+    $("setSave").disabled = true;
+    set("setNote", d.pharosManaged ? "Settings marked “Set by Pharos” are managed by Pharos; change them there. The rest can be changed here."
+                                   : "This camera is not managed by Pharos: every setting can be changed here.");
+    d.groups.forEach(function (g) {
+      var sec = document.createElement("div"); sec.className = "sgroup";
+      var h = document.createElement("h3"); h.textContent = g.name; sec.appendChild(h);
+      var rows = document.createElement("div"); rows.className = "srows"; sec.appendChild(rows);
+      g.settings.forEach(function (st) {
+        var row = document.createElement("div"); row.className = "srow";
+        var id = "set_" + st.key.replace(/\W/g, "_");
+        var lab = document.createElement("label"); lab.htmlFor = id; lab.textContent = st.label; row.appendChild(lab);
+        var ctl = document.createElement("div"); ctl.className = "ctl";
+        var inp;
+        if (st.type === "boolean") { inp = document.createElement("input"); inp.type = "checkbox"; inp.checked = !!st.value; }
+        else if (st.type === "choice") {
+          inp = document.createElement("select");
+          st.options.forEach(function (o) { var op = document.createElement("option"); op.value = o; op.textContent = o.replace("_", " "); inp.appendChild(op); });
+          inp.value = st.value;
+        } else {
+          inp = document.createElement("input"); inp.type = "number"; inp.min = st.min; inp.max = st.max; inp.step = st.step; inp.value = fmtVal(st.value);
+        }
+        inp.id = id;
+        var locked = st.source === "pharos";
+        inp.disabled = locked;
+        inp.addEventListener("change", function () {
+          var v = st.type === "boolean" ? inp.checked : st.type === "choice" ? inp.value : (st.type === "integer" ? parseInt(inp.value, 10) : parseFloat(inp.value));
+          if (st.type !== "boolean" && st.type !== "choice" && (isNaN(v) || v < st.min || v > st.max)) { setResult(st.label + ": between " + st.min + " and " + st.max, "bad"); return; }
+          setChanges[st.key] = v; row.classList.add("changed"); $("setSave").disabled = false; setResult("", "");
+        });
+        ctl.appendChild(inp);
+        if (st.unit) { var u = document.createElement("span"); u.textContent = st.unit; ctl.appendChild(u); }
+        var b = document.createElement("span");
+        b.className = "badge " + st.source;
+        b.textContent = locked ? "Set by Pharos" : st.source === "local" ? "Changed here" : "Default";
+        ctl.appendChild(b);
+        if (st.source === "local") {
+          var rs = document.createElement("button"); rs.type = "button"; rs.className = "reset"; rs.textContent = "reset";
+          rs.title = "Back to the default (" + fmtVal(st["default"]) + ")";
+          rs.addEventListener("click", function () { setChanges[st.key] = null; row.classList.add("changed"); $("setSave").disabled = false; });
+          ctl.appendChild(rs);
+        }
+        row.appendChild(ctl);
+        var help = document.createElement("small"); help.textContent = st.help; row.appendChild(help);
+        rows.appendChild(row);
+      });
+      box.appendChild(sec);
+    });
+  }
+  function loadSettings() {
+    if (demo) { set("setNote", "Settings are available on the camera."); return; }
+    fetch("aurix.cgi?settings", { cache: "no-store", credentials: "same-origin" })
+      .then(function (r) { return r.json(); }).then(renderSettings).catch(function () { set("setNote", "Could not read the settings."); });
+  }
+  $("setSave").addEventListener("click", function () {
+    $("setSave").disabled = true; setResult("Saving…", "");
+    fetch("aurix.cgi?settings", { method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-AURIX-Request": "1" }, body: JSON.stringify(setChanges) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j.error && j.error.message) || "HTTP " + r.status); return j; }); })
+      .then(function (d) { renderSettings(d); setResult("Saved. New settings are in use.", "good"); })
+      .catch(function (err) { setResult(err.message, "bad"); $("setSave").disabled = false; });
+  });
+
   /* ---------------- Pharos connection ---------------- */
   var certPem = null;          /* certificate chosen from a file, as PEM text */
   function b64(buf) { var s = "", b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
@@ -554,10 +649,10 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
     if (demo) { render(simulate()); lastOk = Date.now(); return; }
     fetch("aurix.cgi?data", { cache: "no-store", credentials: "same-origin" })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (m) { failures = 0; var first = !lastOk; lastOk = Date.now(); $("stale").hidden = true; render(m); if (first) loadConn(); })
+      .then(function (m) { failures = 0; var first = !lastOk; lastOk = Date.now(); $("stale").hidden = true; render(m); if (first) { loadConn(); loadSettings(); } })
       .catch(function () {
         failures++;
-        if (!lastOk && failures >= 2) { demo = true; $("demo").hidden = false; tick(); loadConn(); return; }
+        if (!lastOk && failures >= 2) { demo = true; $("demo").hidden = false; tick(); loadConn(); loadSettings(); return; }
         if (lastOk) $("stale").hidden = false;
       });
   }

@@ -18,4 +18,12 @@ float landmarks_eye_distance(const aurix_landmarks *lm);
 /* Template points for a 112x112 crop. */
 extern const float AURIX_TEMPLATE_112[5][2];
 
+/* Face outline from the landmarks: centre between eyes and mouth (nudged toward the forehead),
+ * height from the eye-mouth distance, width from the eye distance. Frame pixels. */
+void landmarks_face_ellipse(const aurix_landmarks *lm, float *cx, float *cy, float *rx, float *ry);
+
+/* Rough head pose from five landmarks (corrected for roll): yaw > 0 = turned toward image right,
+ * pitch > 0 = looking down. 0/0 for a frontal face; good to ~10 degrees, enough to gate identification. */
+void landmarks_pose(const aurix_landmarks *lm, float *yaw_deg, float *pitch_deg);
+
 #endif

@@ -5,6 +5,34 @@
 #include "metrics.h"
 #include "web.h"
 #include "commission.h"
+#include "settings.h"
+static json_t *g_local;
+static json_t *wh_get(void *u)
+{
+    (void)u;
+    pc_config prev, eff;
+    pc_defaults(&prev, 0.45);
+    json_t *a, *r, *x, *managed = json_pack("[s]", "recognition.matchThreshold");
+    json_t *m = json_deep_copy(g_local);
+    json_object_set_new(m, "recognition.matchThreshold", json_real(0.5));
+    pc_apply(m, &prev, 0.45, &eff, &a, &r, &x);
+    json_t *d = settings_describe(&eff, g_local, managed, 0.45);
+    json_object_set_new(d, "pharosManaged", json_true());
+    json_decref(a); json_decref(r); json_decref(x); json_decref(m); json_decref(managed);
+    return d;
+}
+static int wh_set(const json_t *v, char *why, size_t n, void *u)
+{
+    (void)u;
+    json_t *managed = json_pack("[s]", "recognition.matchThreshold");
+    json_t *next = settings_update(g_local, v, managed, 0.45, why, n);
+    json_decref(managed);
+    if (!next) return -1;
+    json_decref(g_local);
+    g_local = next;
+    return 0;
+}
+
 int main(int c, char **v) {
     (void)c;
     metrics_identity id = { "0.5.0", "ARTPEC-8", "DLPU", "dlpu", "mobilefacenet-128-int8-dlpu", "AXIS P3267-LV",
@@ -30,7 +58,8 @@ int main(int c, char **v) {
         metrics_sample(5, "/tmp");
     }
     setenv("FCGI_SOCKET_NAME", getenv("FCGI_SOCK") ? getenv("FCGI_SOCK") : "/tmp/aurix-web.sock", 1);
-    static web_commissioning wc = { "/tmp/aurix-webhost-commission", NULL, NULL, NULL };
+    g_local = json_object();
+    static web_commissioning wc = { "/tmp/aurix-webhost-commission", NULL, NULL, NULL, wh_get, wh_set };
     if (web_start(v[1], &wc)) return 1;
     sleep(30);
     return 0;

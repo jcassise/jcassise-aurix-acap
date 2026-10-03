@@ -14,6 +14,12 @@ static int nshown;
 static gboolean redraw_pending;
 static gint overlay_id = -1;
 static gboolean ready;
+static gint cap_w, cap_h;                          /* capture (full sensor) size: analysis coords are in it */
+static float tune_offset_y, tune_scale_y = 1.0f;
+static int logged_streams[8], nlogged;
+
+void overlay_capture_size(int *w, int *h) { *w = ready ? cap_w : 0; *h = ready ? cap_h : 0; }
+void overlay_set_tuning(float off, float scale, int show_scores) { (void)show_scores; tune_offset_y = off; tune_scale_y = scale; }
 
 /* Main-loop only: what one redraw paints, and the screen area it must clear. Clearing only around
  * faces (now and in the last two redraws, in case the surface is double-buffered) instead of the
@@ -31,10 +37,15 @@ static nrect area_of(const overlay_box *b, int n)
 {
     nrect r = { 1, 1, 0, 0, 1 };
     for (int i = 0; i < n; i++) {
-        double w = b[i].x1 - b[i].x0, h = b[i].y1 - b[i].y0;
-        /* ellipse + glow + label pill above/below */
-        double x0 = b[i].x0 - w * 0.35 - 0.12, x1 = b[i].x1 + w * 0.35 + 0.12;
-        double y0 = b[i].y0 - h * 0.35 - 0.09, y1 = b[i].y1 + h * 0.35 + 0.09;
+        double bx0 = b[i].x0, bx1 = b[i].x1, by0 = b[i].y0, by1 = b[i].y1;
+        if (b[i].ry > 0) {
+            bx0 = fmin(bx0, b[i].cx - b[i].rx); bx1 = fmax(bx1, b[i].cx + b[i].rx);
+            by0 = fmin(by0, b[i].cy - b[i].ry); by1 = fmax(by1, b[i].cy + b[i].ry);
+        }
+        double w = bx1 - bx0, h = by1 - by0;
+        /* ellipse + glow + label pill above/below, generous for crop mapping and tuning */
+        double x0 = bx0 - w * 0.35 - 0.15, x1 = bx1 + w * 0.35 + 0.15;
+        double y0 = by0 - h * 0.35 - 0.15, y1 = by1 + h * 0.35 + 0.15;
         if (r.empty) { r = (nrect){ x0, y0, x1, y1, 0 }; continue; }
         if (x0 < r.x0) r.x0 = x0;
         if (y0 < r.y0) r.y0 = y0;
@@ -84,14 +95,34 @@ static void render_cb(gpointer ctx_ptr, gint id, struct axoverlay_stream_data *s
     cairo_t *cr = ctx_ptr;
     gint64 t0 = g_get_monotonic_time();
 
+    /* Analysis coordinates are normalised to the full sensor. A stream with a different aspect ratio
+     * is a centred crop of it (Axis behaviour): map into that crop. Logged once per stream size. */
+    double vx0 = 0, vy0 = 0, vw = 1, vh = 1;
+    if (cap_w > 0 && cap_h > 0) {
+        double ac = (double)cap_w / cap_h, as = (double)w / h;
+        if (as > ac * 1.01) { vh = ac / as; vy0 = (1 - vh) / 2; }
+        else if (as < ac / 1.01) { vw = as / ac; vx0 = (1 - vw) / 2; }
+    }
+    int key = w * 4 + h, seen = 0;
+    for (int i = 0; i < nlogged; i++) seen |= logged_streams[i] == key;
+    if (!seen && nlogged < 8) {
+        logged_streams[nlogged++] = key;
+        syslog(LOG_INFO, "overlay: drawing on a %dx%d stream (sensor %dx%d, visible area x %.3f+%.3f y %.3f+%.3f)",
+               w, h, cap_w, cap_h, vx0, vw, vy0, vh);
+    }
+#define MAPX(x) ((((x) - vx0) / vw) * w)
+#define MAPY(y) (((0.5 + (((y) - 0.5) * tune_scale_y) + tune_offset_y - vy0) / vh) * h)
+
     /* clear: only around faces when this is one of our redraws; everything otherwise (a stream
      * that just started, or a redraw the system asked for) */
     cairo_save(cr);
-    if (in_redraw && !clear_area.empty) {
-        double x0 = fmax(0, clear_area.x0) * w, y0 = fmax(0, clear_area.y0) * h;
-        double x1 = fmin(1, clear_area.x1) * w, y1 = fmin(1, clear_area.y1) * h;
-        cairo_rectangle(cr, floor(x0), floor(y0), ceil(x1 - x0) + 1, ceil(y1 - y0) + 1);
-        cairo_clip(cr);
+    if (in_redraw && !clear_area.empty) {        /* same mapping as the drawing below */
+        double x0 = fmax(0, MAPX(clear_area.x0)), y0 = fmax(0, fmin(MAPY(clear_area.y0), MAPY(clear_area.y1)));
+        double x1 = fmin(w, MAPX(clear_area.x1)), y1 = fmin(h, fmax(MAPY(clear_area.y0), MAPY(clear_area.y1)));
+        if (x1 > x0 && y1 > y0) {
+            cairo_rectangle(cr, floor(x0), floor(y0), ceil(x1 - x0) + 1, ceil(y1 - y0) + 1);
+            cairo_clip(cr);
+        }
     }
     if (!in_redraw || !clear_area.empty) {
         cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
@@ -120,8 +151,14 @@ static void render_cb(gpointer ctx_ptr, gint id, struct axoverlay_stream_data *s
 
     for (int i = 0; i < n; i++) {
         const overlay_box *bx = &local[i];
-        double cx = (bx->x0 + bx->x1) / 2 * w, cy = (bx->y0 + bx->y1) / 2 * h;
-        double rx = (bx->x1 - bx->x0) / 2 * w * 1.08, ry = (bx->y1 - bx->y0) / 2 * h * 1.15;   /* faces are taller */
+        double cx, cy, rx, ry;
+        if (bx->ry > 0) {                              /* centred on the face itself (landmarks) */
+            cx = MAPX(bx->cx); cy = MAPY(bx->cy);
+            rx = bx->rx / vw * w; ry = bx->ry * tune_scale_y / vh * h;
+        } else {
+            cx = MAPX((bx->x0 + bx->x1) / 2); cy = MAPY((bx->y0 + bx->y1) / 2);
+            rx = (bx->x1 - bx->x0) / 2 / vw * w * 1.08; ry = (bx->y1 - bx->y0) / 2 / vh * h * 1.15;
+        }
         if (rx < 4 || ry < 4) continue;
         double r, g, b;
         color_for(bx->state, &r, &g, &b);
@@ -269,6 +306,8 @@ int overlay_init(void)
     overlay_id = axoverlay_create_overlay(&data, NULL, &err);
     if (err) goto fail;
     ready = TRUE;
+    cap_w = cw;
+    cap_h = ch;
     syslog(LOG_INFO, "overlay: ready (%dx%d)", cw, ch);
     return 0;
 fail:

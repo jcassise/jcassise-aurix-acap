@@ -41,6 +41,7 @@ app/src/tracker.*      face tracking: one track per person in view, name locked 
 app/src/events.*       which tracks are reported (role, reporting.*) and their Event JSON
 app/src/event_queue.*  offline queue: upsert by eventId, priority eviction (strangers first, Threat last)
 app/src/access.*       virtual-access decisions: policies, zones, schedules, excluded dates, time zone
+app/src/settings.*     every adjustable setting: console + Pharos, same keys and rules
 app/src/sync.*         identity sync with Pharos: poll, delta/full (staged, atomic), deletions, photos
 app/src/person_store.* people + on-camera templates, persisted in localdata/pharos/people.json
 app/src/enroll.*       photo -> template on the camera (same detector/aligner/embedder as live)
@@ -189,3 +190,16 @@ Still to do before moving P3267 to 13:
 
 PAD/liveness (hook in `main.c`), tracking + best-frame selection, tiled/high-res detection
 for watchlist at distance, runtime config via axparameter, on-prem management app.
+
+## Settings
+
+Every setting is on the AURIX page (**Settings**) and can be set by Pharos with the same key:
+recognition (`recognition.matchThreshold`, `minFaceSizePx`, `minDetectScore`, `maxYawDeg`,
+`maxPitchDeg`, `maxFaces`, `identifyPerFrame`), tracking (`tracking.lockFrames`, `strangerFrames`,
+`keepMargin`, `sameFace`, `recheckMs`, `events.trackCloseSec`), reporting (`device.role`,
+`reporting.*`, `events.sceneImages`) and live view (`overlay.enabled`, `showScores`, `offsetY`,
+`scaleY`). Values set on the camera are stored in `localdata/settings.json`; a key Pharos sends
+overrides the local value and is shown as "Set by Pharos". Head pose is estimated from the five
+facial landmarks (good to about 10°) and reported in events as `face.yawDeg` / `face.pitchDeg`.
+Occlusion is not measured separately: partly covered faces get lower detection scores, so
+`recognition.minDetectScore` is the control for it.
