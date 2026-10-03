@@ -24,4 +24,7 @@ void overlay_cleanup(void);
 /* Thread-safe: replaces the current boxes and schedules a redraw on the main loop. */
 void overlay_publish(const overlay_box *boxes, int n);
 
+/* Average drawing time per render since the last call, and how many renders (main loop only). */
+void overlay_stats(double *avg_render_ms, unsigned *renders);
+
 #endif

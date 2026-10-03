@@ -158,6 +158,7 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
         <dt>Load (1 min / 5 min)</dt><dd id="load">–</dd>
         <dt>Memory in use</dt><dd id="mem">–</dd><div class="meter"><b id="memMeter"></b></div>
         <dt>AURIX memory</dt><dd id="rss">–</dd>
+        <dt>Live-view drawing</dt><dd id="ovl">–</dd>
         <dt>Face gallery in memory</dt><dd id="galMem">–</dd>
         <dt>Temperature</dt><dd id="temp">–</dd>
         <dt>App storage free</dt><dd id="storage">–</dd>
@@ -400,6 +401,8 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
     set("lastSync", sy.lastOkMs ? dur(Math.max(0, (Date.now() - sy.lastOkMs) / 1000)).replace(/^0 min$/, "under a minute") + " ago" : "Not yet");
     set("tpl", sy.people ? fmt(sy.templatesReady, 0) + " / " + fmt(sy.templatesFailed, 0) + " / " + fmt(sy.templatesPending, 0) : "–",
         sy.templatesFailed ? "warn" : "");
+    var ov = m.overlay || {};
+    set("ovl", ov.rendersPerSec ? fmt(ov.renderMs, 1) + " ms × " + fmt(ov.rendersPerSec, 1) + "/s" : "Idle");
     var ev = m.events || {};
     set("evq", ev.pending === undefined ? "–" : fmt(ev.pending, 0) + (ev.imagesPending ? " (+" + ev.imagesPending + " images)" : "") +
         (ev.dropped ? ", " + ev.dropped + " dropped" : ""), ev.dropped ? "warn" : "");
@@ -470,6 +473,7 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
       recognition: { threshold: 0.45, minEyePx: 40, mode: "watchlist", gallery: { total: 1236, allow: 1227, threat: 9, source: "Pharos" } },
       pharos: { state: "Connected", detail: "", configRevision: 42, sinceMs: now - 3600e3 },
       events: { pending: 0, imagesPending: 0, dropped: 0 },
+      overlay: { renderMs: 3.2, rendersPerSec: 4.6 },
       sync: { revision: 1890, lastOkMs: now - 40e3, people: 412, templatesReady: 1236, templatesFailed: 3, templatesPending: 0 },
       capacity: { estimate: 47168, limitedBy: "storage", byMemory: 912000, byStorage: 47168, byMatching: 196078, nsPerEntry: 25.5,
         matchMsAtEstimate: 1.2, galleryRamBytes: 412 * 197, benchEntries: 4096,

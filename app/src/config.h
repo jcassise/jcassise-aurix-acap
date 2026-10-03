@@ -3,7 +3,7 @@
 #define AURIX_CONFIG_H
 
 #define AURIX_APP_DIR   "/usr/local/packages/aurix"
-#define AURIX_VERSION   "0.7.0"
+#define AURIX_VERSION   "0.7.1"
 #define AURIX_MAX_FACES 16
 #define AURIX_MAX_DIM   1024
 #define AURIX_FACE_SIZE 112

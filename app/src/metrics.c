@@ -46,6 +46,7 @@ static struct {
     char ph_state[64], ph_detail[200];
     long long ph_rev, ph_since;
     long long sy_rev, sy_last_ok;
+    double ov_ms, ov_rate;
     int sy_people, sy_ready, sy_failed, sy_pending;
 } M = { .mu = PTHREAD_MUTEX_INITIALIZER };
 
@@ -153,6 +154,13 @@ void metrics_pharos(const char *state, const char *detail, long long rev)
         snprintf(M.ph_detail, sizeof M.ph_detail, "%s", detail ? detail : "");
     }
     if (rev >= 0) M.ph_rev = rev;
+    pthread_mutex_unlock(&M.mu);
+}
+
+void metrics_overlay(double ms, double rate)
+{
+    pthread_mutex_lock(&M.mu);
+    M.ov_ms = ms; M.ov_rate = rate;
     pthread_mutex_unlock(&M.mu);
 }
 
@@ -265,6 +273,7 @@ json_t *metrics_json(void)
         json_object_set_new(o, "events", json_pack("{s:i,s:i,s:i}", "pending", q.events_pending, "imagesPending",
                                                    q.images_pending, "dropped", (int)q.dropped));
     }
+    json_object_set_new(o, "overlay", json_pack("{s:f,s:f}", "renderMs", M.ov_ms, "rendersPerSec", M.ov_rate));
     json_object_set_new(o, "sync", json_pack("{s:I,s:I,s:i,s:i,s:i,s:i}", "revision", (json_int_t)M.sy_rev,
         "lastOkMs", (json_int_t)M.sy_last_ok, "people", M.sy_people, "templatesReady", M.sy_ready,
         "templatesFailed", M.sy_failed, "templatesPending", M.sy_pending));

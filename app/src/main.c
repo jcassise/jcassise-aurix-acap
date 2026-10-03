@@ -699,6 +699,10 @@ static gboolean metrics_tick(gpointer unused)
 {
     (void)unused;
     metrics_sample(5.0, AURIX_APP_DIR "/localdata");
+    double ms;
+    unsigned renders;
+    overlay_stats(&ms, &renders);              /* main loop: same thread as the renders */
+    metrics_overlay(ms, renders / 5.0);
     return G_SOURCE_CONTINUE;
 }
 

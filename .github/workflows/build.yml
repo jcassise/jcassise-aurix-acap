@@ -79,8 +79,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libjansson-dev
+      - run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libjansson-dev libcairo2-dev
       - run: make -C tests run
+      - run: sh tests/overlay/run.sh
 
   pharos-protocol:
     runs-on: ubuntu-latest
