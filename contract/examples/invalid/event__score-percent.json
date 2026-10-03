@@ -1,0 +1,41 @@
+{
+  "eventId": "6c1f7a1e-0b8e-4b7a-9a43-3e1f2d6a9c10",
+  "revision": 3,
+  "deviceId": "aurix-lobby-01",
+  "streamId": "main",
+  "kind": "sighting",
+  "startedAt": 1790985611200,
+  "updatedAt": 1790985613900,
+  "endedAt": null,
+  "zone": "Lobby",
+  "person": {
+    "personId": "p-2201",
+    "displayName": "Unknown Male A",
+    "watchlist": "threat"
+  },
+  "stranger": false,
+  "match": {
+    "score": 71
+  },
+  "liveness": {
+    "checked": true,
+    "passed": true,
+    "score": 0.93
+  },
+  "access": {
+    "evaluated": true,
+    "decision": "denied",
+    "reason": "watchlist",
+    "policyId": null
+  },
+  "face": {
+    "quality": 0.81,
+    "yawDeg": -6,
+    "pitchDeg": 3,
+    "sizePx": 142
+  },
+  "images": {
+    "face": true,
+    "scene": true
+  }
+}

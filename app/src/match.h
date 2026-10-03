@@ -30,8 +30,10 @@ void gallery_init(aurix_gallery *g, uint32_t dim);
 int  gallery_add(aurix_gallery *g, const char *id, aurix_category cat, const int8_t *emb);
 
 /* Appends entries from a parameter string. Entries whose kind != `kind` or whose size != g->dim
- * are skipped. Returns entries added, or -1 on a malformed string (nothing partially added). */
-int  gallery_parse_param(aurix_gallery *g, const char *s, const char *kind);
+ * are skipped (counted in *skipped_kind / *skipped_size, may be NULL). Returns entries added,
+ * or -1 on a malformed string (nothing partially added). Base64 may be standard or URL-safe;
+ * spaces inside it are read as '+' (web forms often mangle '+'). */
+int  gallery_parse_param(aurix_gallery *g, const char *s, const char *kind, int *skipped_kind, int *skipped_size);
 
 /* L2-normalise then scale to [-127,127]. */
 void embedding_quantize(const float *in, uint32_t dim, int8_t *out);

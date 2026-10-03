@@ -97,7 +97,7 @@ def main():
         for ident, cat, row in zip(ids, cats, q):
             if any(c in ident for c in ",;"):
                 sys.exit(f"name may not contain ',' or ';': {ident}")
-            entries.append(f"{ident},{'threat' if cat else 'allow'},{kind},{base64.b64encode(row.tobytes()).decode()}")
+            entries.append(f"{ident},{'threat' if cat else 'allow'},{kind},{base64.urlsafe_b64encode(row.tobytes()).decode().rstrip('=')}")
         print("\nGallery setting:\n" + ";".join(entries))
 
 

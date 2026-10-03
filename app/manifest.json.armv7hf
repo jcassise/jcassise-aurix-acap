@@ -16,7 +16,7 @@
             "embeddedSdkVersion": "3.0",
             "vendorUrl": "https://cassise.com",
             "runMode": "respawn",
-            "version": "0.3.0"
+            "version": "0.4.0"
         },
         "configuration": {
             "paramConfig": [
@@ -34,6 +34,31 @@
                     "name": "Overlay",
                     "default": "yes",
                     "type": "bool:no,yes"
+                },
+                {
+                    "name": "PharosUrl",
+                    "default": "",
+                    "type": "string"
+                },
+                {
+                    "name": "PharosDeviceId",
+                    "default": "",
+                    "type": "string"
+                },
+                {
+                    "name": "PharosToken",
+                    "default": "",
+                    "type": "string"
+                },
+                {
+                    "name": "PharosServerCert",
+                    "default": "",
+                    "type": "string"
+                },
+                {
+                    "name": "PharosStatus",
+                    "default": "Not commissioned",
+                    "type": "string"
                 }
             ]
         }

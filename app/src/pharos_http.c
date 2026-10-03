@@ -1,0 +1,363 @@
+#include "pharos_http.h"
+#include <ctype.h>
+#include <curl/curl.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/sha.h>
+#include <openssl/x509.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+
+struct ph_client {
+    char base[512];           /* scheme://host[:port]/aurix/v1 */
+    char auth[1100];          /* "Authorization: Bearer ..." */
+    char devhdr[128];         /* "X-AURIX-Device: ..." */
+    char pins[200];           /* "sha256//a;sha256//b" (curl format), empty = CA validation */
+    char fingerprint[2][65];  /* lowercase hex, pending pre-flight */
+    int n_fp;
+    int prepared;
+    CURL *curl;               /* reused: keeps the TLS connection alive between status posts */
+};
+
+static pthread_once_t once = PTHREAD_ONCE_INIT;
+static void global_init(void) { curl_global_init(CURL_GLOBAL_DEFAULT); }
+
+static void set_err(char *why, size_t n, const char *m)
+{
+    if (why && n) snprintf(why, n, "%s", m);
+}
+
+/* ---------- pins ---------- */
+
+int ph_spki_pin_from_cert(const unsigned char *data, size_t len, int is_pem, char *out, size_t out_len)
+{
+    X509 *x = NULL;
+    if (is_pem) {
+        BIO *b = BIO_new_mem_buf(data, (int)len);
+        if (b) x = PEM_read_bio_X509(b, NULL, NULL, NULL);
+        BIO_free(b);
+    } else {
+        const unsigned char *p = data;
+        x = d2i_X509(NULL, &p, (long)len);
+    }
+    if (!x) return -1;
+    unsigned char *der = NULL;
+    int dl = i2d_X509_PUBKEY(X509_get_X509_PUBKEY(x), &der);
+    X509_free(x);
+    if (dl <= 0) return -1;
+    unsigned char h[SHA256_DIGEST_LENGTH];
+    SHA256(der, (size_t)dl, h);
+    OPENSSL_free(der);
+    unsigned char b64[64];
+    int bl = EVP_EncodeBlock(b64, h, sizeof h);
+    if (bl <= 0 || (size_t)bl + 9 > out_len) return -1;
+    snprintf(out, out_len, "sha256//%s", b64);
+    return 0;
+}
+
+static int cert_fingerprint_hex(const unsigned char *der, size_t len, char out[65])
+{
+    unsigned char h[SHA256_DIGEST_LENGTH];
+    SHA256(der, len, h);
+    for (int i = 0; i < 32; i++) sprintf(out + 2 * i, "%02x", h[i]);
+    return 0;
+}
+
+static int parse_hex_fp(const char *s, size_t n, char out[65])
+{
+    int k = 0;
+    for (size_t i = 0; i < n; i++) {
+        char c = s[i];
+        if (c == ':' || c == ' ') continue;
+        if (!isxdigit((unsigned char)c) || k >= 64) return -1;
+        out[k++] = (char)tolower((unsigned char)c);
+    }
+    out[k] = 0;
+    return k == 64 ? 0 : -1;
+}
+
+static int add_pin(ph_client *c, const char *pin)
+{
+    size_t need = strlen(c->pins) + strlen(pin) + 2;
+    if (need > sizeof c->pins) return -1;
+    if (c->pins[0]) strcat(c->pins, ";");
+    strcat(c->pins, pin);
+    return 0;
+}
+
+static int parse_trust(ph_client *c, const char *trust, char *why, size_t wl)
+{
+    c->pins[0] = 0;
+    c->n_fp = 0;
+    if (!trust) return 0;
+    while (*trust == ' ' || *trust == '\n' || *trust == '\r' || *trust == '\t') trust++;
+    if (!*trust) return 0;
+    if (strstr(trust, "-----BEGIN CERTIFICATE-----")) {
+        char pin[80];
+        /* A PEM pasted into a one-line settings field loses its newlines: re-wrap the base64. */
+        const char *b0 = strstr(trust, "-----BEGIN CERTIFICATE-----") + 27;
+        const char *e0 = strstr(b0, "-----END CERTIFICATE-----");
+        char pem[8192];
+        size_t o = 0, col = 0;
+        if (e0 && (size_t)(e0 - b0) < sizeof pem - 100) {
+            o = (size_t)snprintf(pem, sizeof pem, "-----BEGIN CERTIFICATE-----\n");
+            for (const char *q = b0; q < e0; q++) {
+                if (*q == ' ' || *q == '\n' || *q == '\r' || *q == '\t') continue;
+                pem[o++] = *q;
+                if (++col == 64) { pem[o++] = '\n'; col = 0; }
+            }
+            o += (size_t)snprintf(pem + o, sizeof pem - o, "%s-----END CERTIFICATE-----\n", col ? "\n" : "");
+        }
+        if (!o || ph_spki_pin_from_cert((const unsigned char *)pem, o, 1, pin, sizeof pin)) {
+            set_err(why, wl, "Server certificate: PEM could not be parsed");
+            return -1;
+        }
+        return add_pin(c, pin);
+    }
+    char buf[400];
+    snprintf(buf, sizeof buf, "%s", trust);
+    for (char *tok = strtok(buf, ";,"); tok; tok = strtok(NULL, ";,")) {
+        while (*tok == ' ') tok++;
+        size_t n = strlen(tok);
+        while (n && (tok[n - 1] == ' ' || tok[n - 1] == '\n' || tok[n - 1] == '\r')) tok[--n] = 0;
+        if (!n) continue;
+        if (!strncmp(tok, "sha256//", 8)) {
+            if (n < 8 + 43 || add_pin(c, tok)) { set_err(why, wl, "Server certificate: bad sha256// pin"); return -1; }
+        } else if (c->n_fp < 2 && !parse_hex_fp(tok, n, c->fingerprint[c->n_fp])) {
+            c->n_fp++;
+        } else {
+            set_err(why, wl, "Server certificate: expected PEM, sha256//<base64> pin, or 64-hex fingerprint");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* ---------- client ---------- */
+
+ph_client *ph_client_new(const char *base_url, const char *device_id, const char *token,
+                         const char *trust, char *why, size_t wl)
+{
+    pthread_once(&once, global_init);
+    if (!base_url || strncasecmp(base_url, "https://", 8)) {
+        set_err(why, wl, "Pharos URL must start with https://");
+        return NULL;
+    }
+    if (!device_id || !*device_id || !token || !*token) {
+        set_err(why, wl, "Device ID and device token are required");
+        return NULL;
+    }
+    ph_client *c = calloc(1, sizeof *c);
+    if (!c) return NULL;
+    size_t bl = strlen(base_url);
+    while (bl && base_url[bl - 1] == '/') bl--;
+    if (bl > 9 && !strncmp(base_url + bl - 9, "/aurix/v1", 9)) bl -= 9;   /* tolerate a pasted full base */
+    snprintf(c->base, sizeof c->base, "%.*s/aurix/v1", (int)bl, base_url);
+    snprintf(c->auth, sizeof c->auth, "Authorization: Bearer %s", token);
+    snprintf(c->devhdr, sizeof c->devhdr, "X-AURIX-Device: %s", device_id);
+    if (parse_trust(c, trust, why, wl)) { free(c); return NULL; }
+    c->prepared = c->n_fp == 0;
+    c->curl = curl_easy_init();
+    if (!c->curl) { free(c); set_err(why, wl, "curl init failed"); return NULL; }
+    return c;
+}
+
+void ph_client_free(ph_client *c)
+{
+    if (!c) return;
+    if (c->curl) curl_easy_cleanup(c->curl);
+    explicit_bzero(c->auth, sizeof c->auth);
+    free(c);
+}
+
+void ph_client_set_endpoint(ph_client *c, const char *full_base)
+{
+    if (!full_base || strncasecmp(full_base, "https://", 8)) return;   /* never downgrade */
+    size_t n = strlen(full_base);
+    while (n && full_base[n - 1] == '/') n--;
+    snprintf(c->base, sizeof c->base, "%.*s", (int)n, full_base);
+}
+
+static void apply_tls(ph_client *c, CURL *h)
+{
+    if (c->pins[0]) {
+        /* The pin replaces CA/hostname validation (self-signed or IP-address servers);
+         * libcurl enforces CURLOPT_PINNEDPUBLICKEY on every handshake regardless. */
+        curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);
+        curl_easy_setopt(h, CURLOPT_PINNEDPUBLICKEY, c->pins);
+    } else {
+        curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 2L);
+    }
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(h, CURLOPT_PROTOCOLS_STR, "https");
+#else
+    curl_easy_setopt(h, CURLOPT_PROTOCOLS, (long)CURLPROTO_HTTPS);
+#endif
+    curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
+}
+
+ph_err ph_client_prepare(ph_client *c, char *why, size_t wl)
+{
+    if (c->prepared) return PH_OK;
+    /* Pre-flight: TLS handshake only (CONNECT_ONLY), no HTTP and no token sent. */
+    CURL *h = curl_easy_init();
+    if (!h) return PH_ERR_NETWORK;
+    curl_easy_setopt(h, CURLOPT_URL, c->base);
+    curl_easy_setopt(h, CURLOPT_CONNECT_ONLY, 1L);
+    curl_easy_setopt(h, CURLOPT_CERTINFO, 1L);
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
+    CURLcode rc = curl_easy_perform(h);
+    if (rc != CURLE_OK) {
+        set_err(why, wl, curl_easy_strerror(rc));
+        curl_easy_cleanup(h);
+        return PH_ERR_NETWORK;
+    }
+    struct curl_certinfo *ci = NULL;
+    ph_err res = PH_ERR_TLS_PIN;
+    set_err(why, wl, "Server certificate does not match the commissioned fingerprint");
+    if (curl_easy_getinfo(h, CURLINFO_CERTINFO, &ci) == CURLE_OK && ci && ci->num_of_certs > 0) {
+        for (struct curl_slist *s = ci->certinfo[0]; s; s = s->next) {
+            if (strncmp(s->data, "Cert:", 5)) continue;
+            const char *pem = s->data + 5;
+            BIO *b = BIO_new_mem_buf(pem, -1);
+            X509 *x = b ? PEM_read_bio_X509(b, NULL, NULL, NULL) : NULL;
+            BIO_free(b);
+            if (!x) break;
+            unsigned char *der = NULL;
+            int dl = i2d_X509(x, &der);
+            char fp[65] = "";
+            if (dl > 0) cert_fingerprint_hex(der, (size_t)dl, fp);
+            int match = 0;
+            for (int i = 0; i < c->n_fp; i++) match |= !strcmp(fp, c->fingerprint[i]);
+            char pin[80];
+            if (match && dl > 0 && !ph_spki_pin_from_cert(der, (size_t)dl, 0, pin, sizeof pin) && !add_pin(c, pin)) {
+                c->prepared = 1;
+                res = PH_OK;
+                set_err(why, wl, "");
+            }
+            OPENSSL_free(der);
+            X509_free(x);
+            break;
+        }
+    }
+    curl_easy_cleanup(h);
+    return res;
+}
+
+typedef struct { char *p; size_t n, cap; } buf_t;
+
+static size_t on_body(char *d, size_t sz, size_t nm, void *u)
+{
+    buf_t *b = u;
+    size_t n = sz * nm;
+    if (b->n + n + 1 > b->cap) {
+        size_t cap = (b->n + n + 1) * 2;
+        if (cap > 16u << 20) return 0;     /* refuse absurd bodies (> 16 MiB) */
+        char *q = realloc(b->p, cap);
+        if (!q) return 0;
+        b->p = q;
+        b->cap = cap;
+    }
+    memcpy(b->p + b->n, d, n);
+    b->n += n;
+    b->p[b->n] = 0;
+    return n;
+}
+
+typedef struct { int retry_after; int json; } hdr_t;
+
+static size_t on_header(char *d, size_t sz, size_t nm, void *u)
+{
+    hdr_t *h = u;
+    size_t n = sz * nm;
+    if (n > 12 && !strncasecmp(d, "Retry-After:", 12)) h->retry_after = atoi(d + 12);
+    if (n > 13 && !strncasecmp(d, "Content-Type:", 13)) {
+        const char *v = d + 13;
+        while (*v == ' ') v++;
+        h->json = !strncasecmp(v, "application/json", 16);
+    }
+    return n;
+}
+
+ph_response ph_request(ph_client *c, const char *method, const char *path,
+                       const void *body, size_t body_len, const char *ctype, long timeout_s)
+{
+    ph_response r = { .err = PH_OK, .retry_after_s = -1 };
+    if (!c->prepared) {
+        r.err = PH_ERR_TLS_PIN;
+        snprintf(r.errmsg, sizeof r.errmsg, "server identity not verified yet");
+        return r;
+    }
+    CURL *h = c->curl;
+    curl_easy_reset(h);
+    char url[1024];
+    snprintf(url, sizeof url, "%s%s", c->base, path);
+    struct curl_slist *hl = NULL;
+    hl = curl_slist_append(hl, c->auth);
+    hl = curl_slist_append(hl, c->devhdr);
+    hl = curl_slist_append(hl, "Accept: application/json");
+    hl = curl_slist_append(hl, "Expect:");
+    char ct[96];
+    if (body) {
+        snprintf(ct, sizeof ct, "Content-Type: %s", ctype ? ctype : "application/json");
+        hl = curl_slist_append(hl, ct);
+    }
+    buf_t b = { 0 };
+    hdr_t hd = { -1, 0 };
+    curl_easy_setopt(h, CURLOPT_URL, url);
+    curl_easy_setopt(h, CURLOPT_HTTPHEADER, hl);
+    curl_easy_setopt(h, CURLOPT_CUSTOMREQUEST, method);
+    if (body) {
+        curl_easy_setopt(h, CURLOPT_POSTFIELDS, body);
+        curl_easy_setopt(h, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)body_len);
+    } else if (!strcmp(method, "GET")) {
+        curl_easy_setopt(h, CURLOPT_HTTPGET, 1L);
+    }
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, on_body);
+    curl_easy_setopt(h, CURLOPT_WRITEDATA, &b);
+    curl_easy_setopt(h, CURLOPT_HEADERFUNCTION, on_header);
+    curl_easy_setopt(h, CURLOPT_HEADERDATA, &hd);
+    curl_easy_setopt(h, CURLOPT_TIMEOUT, timeout_s > 0 ? timeout_s : 15L);
+    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 0L);   /* never follow redirects with the token */
+    apply_tls(c, h);
+
+    CURLcode rc = curl_easy_perform(h);
+    curl_slist_free_all(hl);
+    if (rc == CURLE_SSL_PINNEDPUBKEYNOTMATCH) {
+        r.err = PH_ERR_TLS_PIN;
+        snprintf(r.errmsg, sizeof r.errmsg, "Server key does not match the commissioned pin");
+    } else if (rc == CURLE_PEER_FAILED_VERIFICATION || rc == CURLE_SSL_CACERT_BADFILE
+#ifdef CURLE_SSL_CACERT
+               || rc == CURLE_SSL_CACERT
+#endif
+               ) {
+        r.err = PH_ERR_TLS_VERIFY;
+        snprintf(r.errmsg, sizeof r.errmsg, "Server certificate not trusted: %s (commission a pin)",
+                 curl_easy_strerror(rc));
+    } else if (rc != CURLE_OK) {
+        r.err = PH_ERR_NETWORK;
+        snprintf(r.errmsg, sizeof r.errmsg, "%s", curl_easy_strerror(rc));
+    } else {
+        curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &r.status);
+    }
+    r.body = b.p;
+    r.body_len = b.n;
+    r.retry_after_s = hd.retry_after;
+    r.json = hd.json;
+    return r;
+}
+
+void ph_response_free(ph_response *r)
+{
+    free(r->body);
+    r->body = NULL;
+}

@@ -1,0 +1,9 @@
+{
+  "accepted": true,
+  "protocol": 1,
+  "serverTime": 1790985600000,
+  "statusIntervalMs": 2000,
+  "endpoints": {
+    "base": "https://pharos.site.local/aurix/v1"
+  }
+}

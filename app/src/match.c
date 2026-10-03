@@ -100,7 +100,7 @@ static int b64val(int c)
     if (c >= 'A' && c <= 'Z') return c - 'A';
     if (c >= 'a' && c <= 'z') return c - 'a' + 26;
     if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+' || c == '-') return 62;
+    if (c == '+' || c == '-' || c == ' ') return 62;   /* ' ': '+' mangled by a web form */
     if (c == '/' || c == '_') return 63;
     return -1;
 }
@@ -132,8 +132,9 @@ static void trim(const char **a, const char **b)
     while (*b > *a && ((*b)[-1] == ' ' || (*b)[-1] == '\t' || (*b)[-1] == '\n' || (*b)[-1] == '\r')) (*b)--;
 }
 
-int gallery_parse_param(aurix_gallery *g, const char *s, const char *kind)
+int gallery_parse_param(aurix_gallery *g, const char *s, const char *kind, int *skipped_kind, int *skipped_size)
 {
+    int sk = 0, ss = 0;
     if (!s) return 0;
     uint32_t start = g->count;
     int added = 0;
@@ -166,7 +167,9 @@ int gallery_parse_param(aurix_gallery *g, const char *s, const char *kind)
             else goto bad;
             int n = b64decode(f[3], fl[3], buf, sizeof(buf));
             if (n < 0) goto bad;
-            if (strlen(kind) == fl[2] && !strncmp(f[2], kind, fl[2]) && (uint32_t)n == g->dim) {
+            if (!(strlen(kind) == fl[2] && !strncmp(f[2], kind, fl[2]))) sk++;
+            else if ((uint32_t)n != g->dim) ss++;
+            else {
                 char id[AURIX_ID_LEN];
                 memcpy(id, f[0], fl[0]);
                 id[fl[0]] = '\0';
@@ -176,6 +179,8 @@ int gallery_parse_param(aurix_gallery *g, const char *s, const char *kind)
         }
         s = *end ? end + 1 : end;
     }
+    if (skipped_kind) *skipped_kind = sk;
+    if (skipped_size) *skipped_size = ss;
     return added;
 bad:
     g->count = start;   /* roll back this call's additions */

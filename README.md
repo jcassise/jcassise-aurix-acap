@@ -34,6 +34,10 @@ app/src/embed_meta.*   embedder sidecar (input size, output zero point)
 app/src/match.*        gallery.bin loader, NEON int8 dot product, cosine top-1
 app/src/main.c         GLib main loop (overlay, settings) + pipeline worker thread, stats
 app/src/overlay.*      live-view boxes: green allow, red threat, blue unknown, grey too small
+app/src/pharos*.{c,h}  AURIX–Pharos protocol v1 client: HTTPS + pinning, /hello, status loop,
+                       config read-back, once-only commands, §8 errors/backoff
+contract/              vendored AURIX–Pharos contract (OpenAPI, schemas, examples) - owner: Pharos
+tests/pharos/          protocol scenarios: real client vs a contract-validating stand-in server
 app/models/            put detect.tflite / embed.tflite here (not committed)
 tests/                 host tests for align / image / match
 tools/make_gallery.py  enrolment embeddings (.npz) → gallery.bin
@@ -64,6 +68,28 @@ make -C tests run
 
 Changes apply immediately (no restart). `localdata/gallery.bin` is still read and merged if present.
 Use `dlpu` entries on ARTPEC-8 and `cpu` entries on ARTPEC-7; others are ignored.
+
+## Connecting to Pharos (protocol v1, step 1)
+
+In Pharos: Hardware → AURIX devices → Add. Copy the values into the camera's
+**Apps → aurix → Settings**:
+
+| Setting | Value |
+|---|---|
+| PharosUrl | `https://<pharos-host>` (AURIX appends `/aurix/v1`) |
+| PharosDeviceId | the device ID Pharos created |
+| PharosToken | the one-time device token |
+| PharosServerCert | certificate fingerprint (64 hex, colons ok), `sha256//<base64>` SPKI pin, or the PEM; two pins separated by `;` during rotation. Empty = CA validation |
+
+**PharosStatus** shows the connection state (Connected, Credentials rejected, TLS pin
+mismatch, Revoked, …). While commissioned, Pharos owns the match threshold and minimum
+face size; the local MatchThreshold setting is ignored. The last config from Pharos is
+kept in `localdata/pharos/` and applied at boot even if Pharos is unreachable.
+
+Implemented now: `/hello`, status every `statusIntervalMs` with `appliedConfig` /
+`rejectedConfig` / `unsupportedConfig`, commands executed once (remembered across
+restarts; all report `unsupported` until their features land), errors and backoff per §8.
+Next: identity sync (§5), events and stills (§7).
 
 ## Install and watch
 

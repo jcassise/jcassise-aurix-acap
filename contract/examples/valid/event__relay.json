@@ -1,0 +1,15 @@
+{
+  "eventId": "1a2b3c4d-0000-4000-8000-000000000002",
+  "revision": 1,
+  "deviceId": "aurix-lobby-01",
+  "kind": "relay",
+  "startedAt": 1790985900000,
+  "updatedAt": 1790985900000,
+  "relay": {
+    "ms": 3000,
+    "trigger": "command",
+    "commandId": "c-79",
+    "operator": "jdoe",
+    "reason": "operator"
+  }
+}

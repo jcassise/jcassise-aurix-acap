@@ -1,0 +1,1362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pharos/aurix/v1/schemas/hello-request.schema.json",
+  "title": "HelloRequest",
+  "$ref": "#/$defs/HelloRequest",
+  "$defs": {
+    "DeviceId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "PersonId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "PhotoId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "PolicyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "EventId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "CommandId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "EpochMs": {
+      "type": "integer",
+      "format": "int64",
+      "minimum": 0
+    },
+    "Revision": {
+      "type": "integer",
+      "format": "int64",
+      "minimum": 0
+    },
+    "Watchlist": {
+      "type": "string",
+      "enum": [
+        "no_concern",
+        "concern",
+        "threat"
+      ],
+      "description": "Display as \"No concern\", \"Concern\", \"Threat\"."
+    },
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "LocalTime": {
+      "type": "string",
+      "description": "Camera-local wall time, HH:MM, 00:00\u201324:00.",
+      "pattern": "^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$"
+    },
+    "LocalDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "Error": {
+      "type": "object",
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Machine-readable. Known values: bad_request, unauthorized,\ndevice_revoked, protocol_unsupported, snapshot_expired,\nnot_found, event_unknown, image_too_large, busy, unavailable.\n"
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "HelloRequest": {
+      "type": "object",
+      "required": [
+        "deviceId",
+        "protocol",
+        "software",
+        "platform",
+        "capabilities"
+      ],
+      "properties": {
+        "deviceId": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "protocol": {
+          "type": "integer",
+          "const": 1
+        },
+        "software": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "const": "AURIX"
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "modelVersion": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        },
+        "platform": {
+          "type": "object",
+          "required": [
+            "vendor",
+            "model",
+            "serial"
+          ],
+          "properties": {
+            "vendor": {
+              "type": "string",
+              "enum": [
+                "axis",
+                "hanwha",
+                "other"
+              ]
+            },
+            "model": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "serial": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "firmware": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "ip": {
+              "type": "string",
+              "description": "Device's own address as it sees it. Pharos uses it to join the device to the camera row.",
+              "x-status": "proposed"
+            }
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "description": "Known values listed; unknown values are ignored.",
+            "examples": [
+              "face-recognition",
+              "watchlist",
+              "access-decision",
+              "scene-images",
+              "relay-output",
+              "liveness"
+            ]
+          }
+        }
+      }
+    },
+    "HelloResponse": {
+      "type": "object",
+      "required": [
+        "accepted",
+        "protocol",
+        "serverTime",
+        "statusIntervalMs",
+        "endpoints"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "const": true
+        },
+        "protocol": {
+          "type": "integer",
+          "const": 1
+        },
+        "serverTime": {
+          "$ref": "#/$defs/EpochMs"
+        },
+        "statusIntervalMs": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 60000
+        },
+        "endpoints": {
+          "type": "object",
+          "required": [
+            "base"
+          ],
+          "properties": {
+            "base": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      }
+    },
+    "Config": {
+      "type": "object",
+      "description": "Desired (from Pharos) or effective (from device) configuration. Flat\ndotted keys. A key Pharos omits means \"device default\". Unknown keys are\nnever an error: the device lists them in `unsupportedConfig`.\n",
+      "properties": {
+        "site.zones": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "uniqueItems": true
+        },
+        "site.timeZone": {
+          "type": "string",
+          "description": "IANA zone used to evaluate schedules and excludedDates. If absent, the camera's own zone.",
+          "examples": [
+            "America/Los_Angeles"
+          ],
+          "x-status": "proposed"
+        },
+        "reporting.mode": {
+          "type": "string",
+          "enum": [
+            "watchlist",
+            "enrolled",
+            "all"
+          ]
+        },
+        "reporting.strangers": {
+          "type": "boolean"
+        },
+        "reporting.noConcernSightings": {
+          "type": "boolean"
+        },
+        "reporting.unrecognizable": {
+          "type": "boolean"
+        },
+        "recognition.matchThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "recognition.minFaceSizePx": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recognition.liveness": {
+          "type": "boolean"
+        },
+        "events.trackCloseSec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "events.sceneImages": {
+          "type": "boolean"
+        },
+        "sync.intervalMs": {
+          "type": "integer",
+          "minimum": 500
+        },
+        "sync.keepAllPeople": {
+          "type": "boolean"
+        },
+        "sync.maxDeltaAgeSec": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sync.downloadPhotos": {
+          "type": "boolean"
+        },
+        "access.reportDecisions": {
+          "type": "boolean"
+        },
+        "relay.enabled": {
+          "type": "boolean"
+        },
+        "relay.pulseMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 10000
+        },
+        "device.localUiEnabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "StatusRequest": {
+      "type": "object",
+      "required": [
+        "time",
+        "appliedConfigRevision",
+        "appliedConfig",
+        "sync",
+        "queue",
+        "health"
+      ],
+      "properties": {
+        "time": {
+          "$ref": "#/$defs/EpochMs"
+        },
+        "appliedConfigRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0 before any configuration has been received."
+        },
+        "appliedConfig": {
+          "$ref": "#/$defs/Config"
+        },
+        "rejectedConfig": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "reason"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "unsupportedConfig": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "sync": {
+          "type": "object",
+          "required": [
+            "revision",
+            "people",
+            "templatesReady",
+            "templatesFailed"
+          ],
+          "properties": {
+            "revision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "policiesRevision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "people": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "templatesReady": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "templatesFailed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "inProgress": {
+              "type": "string",
+              "enum": [
+                "none",
+                "delta",
+                "full"
+              ],
+              "x-status": "proposed"
+            },
+            "lastSuccessAt": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/EpochMs"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastError": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "queue": {
+          "type": "object",
+          "required": [
+            "eventsPending",
+            "imagesPending"
+          ],
+          "properties": {
+            "eventsPending": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "imagesPending": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "oldestPendingAt": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/EpochMs"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dropped": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Items dropped from the bounded queue since boot.",
+              "x-status": "proposed"
+            }
+          }
+        },
+        "health": {
+          "type": "object",
+          "properties": {
+            "cpuPct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "tempC": {
+              "type": "number"
+            },
+            "fps": {
+              "type": "number",
+              "minimum": 0
+            },
+            "clockDriftMs": {
+              "type": "integer"
+            },
+            "streams": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "ok"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "ok": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "commandResults": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CommandResult"
+          }
+        }
+      }
+    },
+    "StatusResponse": {
+      "type": "object",
+      "required": [
+        "configRevision",
+        "config",
+        "commands",
+        "nextStatusInMs"
+      ],
+      "properties": {
+        "configRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "config": {
+          "$ref": "#/$defs/Config"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Command"
+          }
+        },
+        "nextStatusInMs": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 60000
+        }
+      }
+    },
+    "Command": {
+      "type": "object",
+      "required": [
+        "commandId",
+        "type"
+      ],
+      "description": "Executed exactly once per commandId; result reported in the next status.",
+      "properties": {
+        "commandId": {
+          "$ref": "#/$defs/CommandId"
+        },
+        "type": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "resync"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "captureScene"
+            },
+            "args": {
+              "type": "object",
+              "properties": {
+                "streamId": {
+                  "type": "string",
+                  "default": "main"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "relayPulse"
+            },
+            "args": {
+              "type": "object",
+              "properties": {
+                "ms": {
+                  "type": "integer",
+                  "minimum": 100,
+                  "maximum": 10000
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "operator": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "reenroll"
+            },
+            "args": {
+              "type": "object",
+              "properties": {
+                "personIds": {
+                  "type": "array",
+                  "description": "Empty or absent means everyone.",
+                  "items": {
+                    "$ref": "#/$defs/PersonId"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "Unknown command type. Device reports status `unsupported`.",
+          "properties": {
+            "type": {
+              "not": {
+                "enum": [
+                  "resync",
+                  "captureScene",
+                  "relayPulse",
+                  "reenroll"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CommandResult": {
+      "type": "object",
+      "required": [
+        "commandId",
+        "status"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "#/$defs/CommandId"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "done",
+            "failed",
+            "unsupported"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "SyncState": {
+      "type": "object",
+      "required": [
+        "revision",
+        "policiesRevision"
+      ],
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "policiesRevision": {
+          "$ref": "#/$defs/Revision"
+        }
+      }
+    },
+    "Policy": {
+      "type": "object",
+      "required": [
+        "policyId",
+        "name",
+        "banned",
+        "allZonesAllTimes",
+        "rules"
+      ],
+      "properties": {
+        "policyId": {
+          "$ref": "#/$defs/PolicyId"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "banned": {
+          "type": "boolean"
+        },
+        "allZonesAllTimes": {
+          "type": "boolean"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "zones",
+              "schedule"
+            ],
+            "properties": {
+              "zones": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "schedule": {
+                "type": "array",
+                "description": "Each entry is one same-day window, start < end. A window\ncrossing midnight is sent as two entries.\n",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "days",
+                    "start",
+                    "end"
+                  ],
+                  "properties": {
+                    "days": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "mon",
+                          "tue",
+                          "wed",
+                          "thu",
+                          "fri",
+                          "sat",
+                          "sun"
+                        ]
+                      }
+                    },
+                    "start": {
+                      "$ref": "#/$defs/LocalTime"
+                    },
+                    "end": {
+                      "$ref": "#/$defs/LocalTime"
+                    }
+                  }
+                }
+              },
+              "excludedDates": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/LocalDate"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "PoliciesResponse": {
+      "type": "object",
+      "required": [
+        "revision",
+        "policies"
+      ],
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Policy"
+          }
+        }
+      }
+    },
+    "Photo": {
+      "type": "object",
+      "required": [
+        "photoId",
+        "sha256",
+        "kind",
+        "updatedAt"
+      ],
+      "properties": {
+        "photoId": {
+          "$ref": "#/$defs/PhotoId"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "face",
+            "face-masked"
+          ]
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/EpochMs"
+        }
+      }
+    },
+    "Person": {
+      "type": "object",
+      "required": [
+        "personId",
+        "revision",
+        "displayName",
+        "watchlist",
+        "policyIds",
+        "photos"
+      ],
+      "properties": {
+        "personId": {
+          "$ref": "#/$defs/PersonId"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "externalRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "firstName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "lastName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "personType": {
+          "type": "string",
+          "description": "Passed through. Known values listed; others allowed.",
+          "examples": [
+            "employee",
+            "contractor",
+            "visitor",
+            "watchlist-only"
+          ]
+        },
+        "watchlist": {
+          "$ref": "#/$defs/Watchlist"
+        },
+        "policyIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/PolicyId"
+          }
+        },
+        "validFrom": {
+          "description": "Epoch ms. Null means no lower bound. (Doc example used ISO 8601; changed for consistency.)",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/EpochMs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-status": "proposed"
+        },
+        "validUntil": {
+          "description": "Epoch ms. Null means no upper bound.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/EpochMs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-status": "proposed"
+        },
+        "photos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Photo"
+          }
+        }
+      }
+    },
+    "PeoplePage": {
+      "type": "object",
+      "required": [
+        "snapshotRevision",
+        "people",
+        "nextCursor",
+        "total"
+      ],
+      "properties": {
+        "snapshotRevision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "people": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Person"
+          }
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total people in this sync (all pages). Full sync is applied only if the received count equals this."
+        }
+      }
+    },
+    "DeletionsResponse": {
+      "type": "object",
+      "required": [
+        "snapshotRevision",
+        "deleted"
+      ],
+      "properties": {
+        "snapshotRevision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "deleted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "personId",
+              "revision"
+            ],
+            "properties": {
+              "personId": {
+                "$ref": "#/$defs/PersonId"
+              },
+              "revision": {
+                "$ref": "#/$defs/Revision"
+              }
+            }
+          }
+        }
+      }
+    },
+    "Event": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "revision",
+        "deviceId",
+        "kind",
+        "startedAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "eventId": {
+          "$ref": "#/$defs/EventId"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "deviceId": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "streamId": {
+          "type": "string",
+          "default": "main"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "sighting",
+            "access",
+            "relay",
+            "snapshot",
+            "device"
+          ]
+        },
+        "startedAt": {
+          "$ref": "#/$defs/EpochMs"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/EpochMs"
+        },
+        "endedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/EpochMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "zone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "person": {
+          "description": "Null for strangers and unrecognizable faces.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "personId",
+                "watchlist"
+              ],
+              "properties": {
+                "personId": {
+                  "$ref": "#/$defs/PersonId"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "watchlist": {
+                  "$ref": "#/$defs/Watchlist"
+                }
+              }
+            }
+          ]
+        },
+        "stranger": {
+          "type": "boolean"
+        },
+        "unrecognizable": {
+          "type": "boolean",
+          "description": "Face too poor to match (reported only under `reporting.unrecognizable` or mode `all`).",
+          "x-status": "proposed"
+        },
+        "match": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "modelVersion": {
+              "type": "string"
+            }
+          }
+        },
+        "liveness": {
+          "type": "object",
+          "properties": {
+            "checked": {
+              "type": "boolean"
+            },
+            "passed": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "score": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "access": {
+          "type": "object",
+          "required": [
+            "evaluated"
+          ],
+          "properties": {
+            "evaluated": {
+              "type": "boolean"
+            },
+            "decision": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "granted",
+                "denied",
+                null
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Known values listed; others allowed.",
+              "examples": [
+                "policy",
+                "watchlist",
+                "banned",
+                "schedule",
+                "zone",
+                "excluded_date",
+                "validity",
+                "liveness",
+                "no_policy",
+                "stranger"
+              ]
+            },
+            "policyId": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PolicyId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "face": {
+          "type": "object",
+          "properties": {
+            "quality": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "yawDeg": {
+              "type": "number"
+            },
+            "pitchDeg": {
+              "type": "number"
+            },
+            "sizePx": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "images": {
+          "type": "object",
+          "description": "Which images the device has uploaded or will upload for this event.",
+          "properties": {
+            "face": {
+              "type": "boolean"
+            },
+            "scene": {
+              "type": "boolean"
+            }
+          }
+        },
+        "relay": {
+          "description": "Present when kind = relay.",
+          "x-status": "proposed",
+          "type": "object",
+          "required": [
+            "ms"
+          ],
+          "properties": {
+            "ms": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 10000
+            },
+            "trigger": {
+              "type": "string",
+              "enum": [
+                "command",
+                "access"
+              ]
+            },
+            "commandId": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CommandId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operator": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "commandId": {
+          "description": "For kind = snapshot, the captureScene command that caused it.",
+          "x-status": "proposed",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CommandId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "device": {
+          "description": "Present when kind = device.",
+          "x-status": "proposed",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "examples": [
+                "stream_lost",
+                "stream_restored",
+                "tamper",
+                "storage_error",
+                "clock_drift",
+                "queue_overflow"
+              ]
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "access"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "access"
+            ],
+            "properties": {
+              "access": {
+                "required": [
+                  "evaluated",
+                  "decision"
+                ],
+                "properties": {
+                  "evaluated": {
+                    "const": true
+                  },
+                  "decision": {
+                    "enum": [
+                      "granted",
+                      "denied"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "relay"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "relay"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "device"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "device"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "person": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "person"
+            ]
+          },
+          "then": {
+            "properties": {
+              "stranger": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "EventAck": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "applied",
+        "storedRevision"
+      ],
+      "properties": {
+        "eventId": {
+          "$ref": "#/$defs/EventId"
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "False when the PUT was stale or a duplicate."
+        },
+        "storedRevision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

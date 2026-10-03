@@ -1,0 +1,18 @@
+{
+  "time": 1790985600000,
+  "appliedConfigRevision": 0,
+  "appliedConfig": {},
+  "sync": {
+    "revision": 0,
+    "people": 0,
+    "templatesReady": 0,
+    "templatesFailed": 0,
+    "lastSuccessAt": null,
+    "lastError": null
+  },
+  "queue": {
+    "eventsPending": 0,
+    "imagesPending": 0
+  },
+  "health": {}
+}

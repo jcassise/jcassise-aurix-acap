@@ -1,0 +1,7 @@
+{
+  "commandId": "c-1",
+  "type": "relayPulse",
+  "args": {
+    "ms": 60000
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "snapshotRevision": 1890,
+  "people": [
+    {
+      "personId": "p-1043",
+      "revision": 1884,
+      "externalRef": "HR-00791",
+      "displayName": "Dana Ruiz",
+      "firstName": "Dana",
+      "lastName": "Ruiz",
+      "personType": "employee",
+      "watchlist": "no_concern",
+      "policyIds": [
+        "pol-staff-lobby"
+      ],
+      "validFrom": 1767225600000,
+      "validUntil": null,
+      "photos": [
+        {
+          "photoId": "ph-88",
+          "sha256": "9f2c000000000000000000000000000000000000000000000000000000000000",
+          "kind": "face",
+          "updatedAt": 1790900000000
+        },
+        {
+          "photoId": "ph-91",
+          "sha256": "11ab000000000000000000000000000000000000000000000000000000000000",
+          "kind": "face-masked",
+          "updatedAt": 1790900000000
+        }
+      ]
+    },
+    {
+      "personId": "p-2201",
+      "revision": 1889,
+      "displayName": "Unknown Male A",
+      "personType": "watchlist-only",
+      "watchlist": "threat",
+      "policyIds": [],
+      "photos": [
+        {
+          "photoId": "ph-120",
+          "sha256": "abababababababababababababababababababababababababababababababab",
+          "kind": "face",
+          "updatedAt": 1790980000000
+        }
+      ]
+    }
+  ],
+  "nextCursor": "eyJvIjo1MDB9",
+  "total": 412
+}

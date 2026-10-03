@@ -1,0 +1,10 @@
+{
+  "time": 1,
+  "appliedConfigRevision": 0,
+  "appliedConfig": {},
+  "queue": {
+    "eventsPending": 0,
+    "imagesPending": 0
+  },
+  "health": {}
+}

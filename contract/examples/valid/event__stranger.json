@@ -1,0 +1,13 @@
+{
+  "eventId": "0f8e2b6c-1d1a-4a35-9c7e-5b9f1c0e2a11",
+  "revision": 1,
+  "deviceId": "aurix-lobby-01",
+  "kind": "sighting",
+  "startedAt": 1790985700000,
+  "updatedAt": 1790985700000,
+  "person": null,
+  "stranger": true,
+  "access": {
+    "evaluated": false
+  }
+}

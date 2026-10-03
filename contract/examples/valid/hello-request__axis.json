@@ -1,0 +1,23 @@
+{
+  "deviceId": "aurix-lobby-01",
+  "protocol": 1,
+  "software": {
+    "name": "AURIX",
+    "version": "1.4.2",
+    "modelVersion": "face-r50-2026.09"
+  },
+  "platform": {
+    "vendor": "axis",
+    "model": "P3265-LVE",
+    "serial": "B8A44F000001",
+    "firmware": "11.11.73",
+    "ip": "192.168.1.150"
+  },
+  "capabilities": [
+    "face-recognition",
+    "watchlist",
+    "access-decision",
+    "scene-images",
+    "relay-output"
+  ]
+}

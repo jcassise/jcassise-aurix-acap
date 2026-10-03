@@ -223,8 +223,9 @@ static void test_gallery_param(void)
     aurix_gallery g;
     gallery_init(&g, D);
     snprintf(s, sizeof s, " John Cassise ,allow,dlpu,%s ; Bad Guy,threat,dlpu,%s;Other Cam,allow,cpu,%s;", b1, b2, b1);
-    int n = gallery_parse_param(&g, s, "dlpu");
-    CHECK(n == 2 && g.count == 2, "parsed %d (count %u), want 2 (cpu entry skipped)", n, g.count);
+    int skk = 0, sks = 0;
+    int n = gallery_parse_param(&g, s, "dlpu", &skk, &sks);
+    CHECK(n == 2 && g.count == 2 && skk == 1 && sks == 0, "parsed %d (count %u, skipped %d/%d), want 2", n, g.count, skk, sks);
     CHECK(!strcmp(g.ids[0], "John Cassise") && g.category[0] == AURIX_CAT_ALLOW, "entry 0 = '%s' cat %u", g.ids[0], g.category[0]);
     CHECK(!strcmp(g.ids[1], "Bad Guy") && g.category[1] == AURIX_CAT_THREAT, "entry 1 = '%s' cat %u", g.ids[1], g.category[1]);
     float score;
@@ -232,10 +233,16 @@ static void test_gallery_param(void)
 
     /* malformed: unknown category -> -1 and nothing from this call kept */
     snprintf(s, sizeof s, "Ok Person,allow,dlpu,%s;Broken,maybe,dlpu,%s", b1, b1);
-    CHECK(gallery_parse_param(&g, s, "dlpu") == -1 && g.count == 2, "malformed string not rolled back (count %u)", g.count);
+    CHECK(gallery_parse_param(&g, s, "dlpu", NULL, NULL) == -1 && g.count == 2, "malformed string not rolled back (count %u)", g.count);
     /* wrong embedding size is skipped, not an error */
-    CHECK(gallery_parse_param(&g, "Short,allow,dlpu,AAAA", "dlpu") == 0 && g.count == 2, "short embedding accepted");
-    CHECK(gallery_parse_param(&g, "", "dlpu") == 0 && gallery_parse_param(&g, NULL, "dlpu") == 0, "empty string not ok");
+    CHECK(gallery_parse_param(&g, "Short,allow,dlpu,AAAA", "dlpu", &skk, &sks) == 0 && sks == 1 && g.count == 2, "short embedding accepted");
+    CHECK(gallery_parse_param(&g, "", "dlpu", NULL, NULL) == 0 && gallery_parse_param(&g, NULL, "dlpu", NULL, NULL) == 0, "empty string not ok");
+    /* '+' turned into ' ' by a web form must still decode to the same embedding */
+    char mangled[1024];
+    snprintf(mangled, sizeof mangled, "Form Mangled,allow,dlpu,%s", b2);
+    for (char *c = mangled; *c; c++) if (*c == '+') *c = ' ';
+    CHECK(gallery_parse_param(&g, mangled, "dlpu", NULL, NULL) == 1, "space-mangled base64 rejected");
+    CHECK(gallery_best(&g, e2, &score) >= 0 && score > 0.999f, "space-mangled entry decoded wrong");
     gallery_free(&g);
 }
 

@@ -18,6 +18,7 @@
 #include "embed.h"
 #include "match.h"
 #include "overlay.h"
+#include "pharos.h"
 
 #define APP_NAME "aurix"
 #define MATCH_LOG_INTERVAL_S 5.0
@@ -34,8 +35,16 @@ typedef struct {
     GMutex gal_lock;             /* protects everything below */
     aurix_gallery gallery;
     double *last_logged;         /* per gallery entry, for MATCH log rate limiting */
+    double last_nomatch_log;
     float threshold;
+    float min_eye_px;
     gboolean overlay_on;
+    double fps;
+    gboolean stream_ok;
+
+    pharos *pharos;              /* Pharos client (NULL until commissioned settings are read) */
+    GMutex pharos_lock;          /* serialises restarts */
+    gboolean pharos_managed;     /* commissioned: Pharos owns threshold / min face size */
     char *file_gallery_path;
 } app_ctx;
 
@@ -64,11 +73,18 @@ static void rebuild_gallery(app_ctx *a, const char *param_value)
         gallery_init(&g, dim);
     }
     uint32_t from_file = g.count;
-    int from_param = gallery_parse_param(&g, param_value, a->cfg.embed_kind);
+    int sk = 0, ss = 0;
+    syslog(LOG_INFO, "Gallery setting: %zu characters", param_value ? strlen(param_value) : (size_t)0);
+    int from_param = gallery_parse_param(&g, param_value, a->cfg.embed_kind, &sk, &ss);
     if (from_param < 0) {
-        syslog(LOG_ERR, "Gallery setting is malformed - keeping file entries only");
+        syslog(LOG_ERR, "Gallery setting is malformed (expected name,allow|threat,kind,base64;...) - "
+                        "keeping file entries only");
         from_param = 0;
     }
+    if (sk) syslog(LOG_WARNING, "Gallery: %d entr%s for another camera type skipped (this camera needs '%s')",
+                   sk, sk == 1 ? "y" : "ies", a->cfg.embed_kind);
+    if (ss) syslog(LOG_WARNING, "Gallery: %d entr%s with wrong embedding size skipped (truncated?)",
+                   ss, ss == 1 ? "y" : "ies");
     double *ll = calloc(g.count ? g.count : 1, sizeof(double));
 
     g_mutex_lock(&a->gal_lock);
@@ -84,6 +100,8 @@ static void rebuild_gallery(app_ctx *a, const char *param_value)
         syslog(LOG_INFO, "  %s [%s]", g.ids[i], g.category[i] == AURIX_CAT_THREAT ? "threat" : "allow");
 }
 
+static void schedule_pharos_restart(app_ctx *a);
+
 static void on_param(const gchar *name, const gchar *value, gpointer data)
 {
     app_ctx *a = data;   /* must not call ax_parameter_* here */
@@ -92,9 +110,17 @@ static void on_param(const gchar *name, const gchar *value, gpointer data)
     } else if (g_str_has_suffix(name, ".MatchThreshold")) {
         int v = value ? atoi(value) : 45;
         g_mutex_lock(&a->gal_lock);
+        if (a->pharos_managed) {
+            g_mutex_unlock(&a->gal_lock);
+            syslog(LOG_INFO, "MatchThreshold setting ignored: this camera is managed by Pharos");
+            return;
+        }
         a->threshold = (v < 0 ? 0 : v > 100 ? 100 : v) / 100.0f;
         g_mutex_unlock(&a->gal_lock);
         syslog(LOG_INFO, "match threshold now %.2f", (v < 0 ? 0 : v > 100 ? 100 : v) / 100.0);
+    } else if (g_str_has_suffix(name, ".PharosUrl") || g_str_has_suffix(name, ".PharosDeviceId") ||
+               g_str_has_suffix(name, ".PharosToken") || g_str_has_suffix(name, ".PharosServerCert")) {
+        schedule_pharos_restart(a);
     } else if (g_str_has_suffix(name, ".Overlay")) {
         g_mutex_lock(&a->gal_lock);
         a->overlay_on = value && !strcmp(value, "yes");
@@ -117,6 +143,130 @@ static char *param_get(AXParameter *p, const char *name)
     return v;
 }
 
+/* ---------------- Pharos integration ---------------- */
+
+static void pharos_apply(const pc_config *c, void *user)
+{
+    app_ctx *a = user;
+    g_mutex_lock(&a->gal_lock);
+    a->pharos_managed = TRUE;
+    a->threshold = (float)c->match_threshold;
+    a->min_eye_px = c->min_face_px / 2.25f;      /* face box width -> inter-eye distance */
+    g_mutex_unlock(&a->gal_lock);
+    syslog(LOG_INFO, "pharos config: threshold %.2f, min face %d px, mode %s, %d zone(s)%s%s",
+           c->match_threshold, c->min_face_px, pc_mode_name(c->mode), c->nzones,
+           c->time_zone[0] ? ", tz " : "", c->time_zone);
+}
+
+static void pharos_snapshot_cb(pharos_snapshot *s, void *user)
+{
+    app_ctx *a = user;
+    g_mutex_lock(&a->gal_lock);
+    s->people = (int)a->gallery.count;
+    s->templates_ready = (int)a->gallery.count;
+    s->fps = a->fps;
+    s->stream_ok = a->stream_ok;
+    g_mutex_unlock(&a->gal_lock);
+}
+
+typedef struct { app_ctx *a; char text[200]; } status_msg;
+
+static gboolean publish_status_idle(gpointer data)
+{
+    status_msg *m = data;
+    GError *err = NULL;
+    if (m->a->params && !ax_parameter_set(m->a->params, "PharosStatus", m->text, TRUE, &err)) {
+        syslog(LOG_WARNING, "cannot update PharosStatus: %s", err ? err->message : "?");
+        g_clear_error(&err);
+    }
+    g_free(m);
+    return G_SOURCE_REMOVE;
+}
+
+static void pharos_state_cb(pharos_state st, const char *detail, void *user)
+{
+    app_ctx *a = user;
+    status_msg *m = g_new0(status_msg, 1);
+    m->a = a;
+    snprintf(m->text, sizeof m->text, "%s%s%s", pharos_state_name(st), detail && *detail ? ": " : "",
+             detail ? detail : "");
+    g_idle_add(publish_status_idle, m);      /* ax_parameter_* must run on the main loop */
+}
+
+static const char *pharos_command_cb(const char *type, const json_t *args, char *detail, size_t n, void *user)
+{
+    (void)args; (void)user;
+    if (!strcmp(type, "resync") || !strcmp(type, "reenroll") || !strcmp(type, "captureScene")) {
+        snprintf(detail, n, "%s arrives in a later AURIX build", type);
+        return "unsupported";
+    }
+    return "unsupported";
+}
+
+static void read_param(AXParameter *p, const char *name, char *out, size_t n)
+{
+    char *v = param_get(p, name);
+    snprintf(out, n, "%s", v ? v : "");
+    g_free(v);
+}
+
+/* (Re)starts the Pharos client from the current settings. Runs off the main loop: stopping the old
+ * client can wait for an in-flight request. */
+static gpointer pharos_restart_thread(gpointer data)
+{
+    app_ctx *a = data;
+    g_mutex_lock(&a->pharos_lock);
+    pharos_stop(a->pharos);
+    a->pharos = NULL;
+    pharos_settings s = { 0 };
+    read_param(a->params, "PharosUrl", s.url, sizeof s.url);
+    read_param(a->params, "PharosDeviceId", s.device_id, sizeof s.device_id);
+    read_param(a->params, "PharosToken", s.token, sizeof s.token);
+    read_param(a->params, "PharosServerCert", s.trust, sizeof s.trust);
+    snprintf(s.state_dir, sizeof s.state_dir, "%s/localdata/pharos", AURIX_APP_DIR);
+    snprintf(s.sw_version, sizeof s.sw_version, "%s", AURIX_VERSION);
+    snprintf(s.model_version, sizeof s.model_version, "mobilefacenet-128-int8-%s", a->cfg.embed_kind);
+    read_param(a->params, "Brand.ProdNbr", s.hw_model, sizeof s.hw_model);
+    read_param(a->params, "Properties.System.SerialNumber", s.serial, sizeof s.serial);
+    read_param(a->params, "Properties.Firmware.Version", s.firmware, sizeof s.firmware);
+    if (!s.hw_model[0]) snprintf(s.hw_model, sizeof s.hw_model, "unknown");
+    if (!s.serial[0]) snprintf(s.serial, sizeof s.serial, "unknown");
+    s.default_threshold = a->cfg.match_threshold;
+    pharos_hooks h = { pharos_apply, pharos_snapshot_cb, pharos_state_cb, pharos_command_cb, a };
+    if (s.url[0] && s.device_id[0] && s.token[0]) {
+        a->pharos = pharos_start(&s, &h);
+    } else {
+        g_mutex_lock(&a->gal_lock);
+        gboolean was = a->pharos_managed;
+        a->pharos_managed = FALSE;
+        g_mutex_unlock(&a->gal_lock);
+        if (was) {                                   /* decommissioned: local settings apply again */
+            char *v = param_get(a->params, "MatchThreshold");
+            if (v) { on_param(".MatchThreshold", v, a); g_free(v); }
+        }
+        pharos_state_cb(PS_DISABLED, "enter Pharos URL, device ID and token", a);
+    }
+    explicit_bzero(s.token, sizeof s.token);
+    g_mutex_unlock(&a->pharos_lock);
+    return NULL;
+}
+
+static guint pharos_restart_src;
+
+static gboolean pharos_restart_due(gpointer data)
+{
+    pharos_restart_src = 0;
+    g_thread_unref(g_thread_new("aurix-pharos-restart", pharos_restart_thread, data));
+    return G_SOURCE_REMOVE;
+}
+
+static void schedule_pharos_restart(app_ctx *a)
+{
+    /* debounce: an installer usually edits several fields in a row */
+    if (pharos_restart_src) g_source_remove(pharos_restart_src);
+    pharos_restart_src = g_timeout_add_seconds(2, pharos_restart_due, a);
+}
+
 static gpointer worker(gpointer data)
 {
     app_ctx *a = data;
@@ -129,6 +279,8 @@ static gpointer worker(gpointer data)
     stat_acc t_cap = {0}, t_det = {0}, t_align = {0}, t_emb = {0}, t_match = {0};
     unsigned frames = 0, faces_detected = 0, faces_gated = 0, faces_embedded = 0, matches = 0;
     const unsigned max_faces = cfg->max_faces < AURIX_MAX_FACES ? cfg->max_faces : AURIX_MAX_FACES;
+    double fps_t0 = now_s();
+    unsigned fps_frames = 0;
 
     while (g_atomic_int_get(&a->running)) {
         aurix_image frame;
@@ -141,6 +293,16 @@ static gpointer worker(gpointer data)
         acc(&t_det, (t2 - t1) * 1e3);
         if (n < 0) n = 0;
         faces_detected += (unsigned)n;
+        g_mutex_lock(&a->gal_lock);
+        const float min_eye = a->min_eye_px;
+        a->stream_ok = TRUE;
+        if (++fps_frames >= 20) {
+            double t = now_s();
+            a->fps = fps_frames / (t - fps_t0);
+            fps_t0 = t;
+            fps_frames = 0;
+        }
+        g_mutex_unlock(&a->gal_lock);
 
         memset(ob, 0, sizeof(ob));
         int nob = 0;
@@ -152,7 +314,7 @@ static gpointer worker(gpointer data)
                 bx->y0 = faces[i].y0 / frame.h; bx->y1 = faces[i].y1 / frame.h;
                 bx->state = OV_PENDING;
             }
-            if (landmarks_eye_distance(&faces[i].lm) < (float)cfg->min_eye_px) continue;
+            if (landmarks_eye_distance(&faces[i].lm) < min_eye) continue;
             faces_gated++;
             if (!a->emb || embedded_this_frame >= cfg->max_embed_per_frame) continue;
             embedded_this_frame++;
@@ -178,8 +340,15 @@ static gpointer worker(gpointer data)
                 if (hit)
                     snprintf(bx->label, sizeof(bx->label), "%s%s %.2f", threat ? "THREAT: " : "",
                              a->gallery.ids[idx], score);
+                else if (idx >= 0)
+                    snprintf(bx->label, sizeof(bx->label), "unknown (%.2f)", score);
                 else
                     snprintf(bx->label, sizeof(bx->label), "unknown");
+            }
+            if (!hit && idx >= 0 && now_s() - a->last_nomatch_log >= MATCH_LOG_INTERVAL_S) {
+                a->last_nomatch_log = now_s();
+                syslog(LOG_INFO, "no match: closest %s score=%.3f (threshold %.2f)", a->gallery.ids[idx], score,
+                       a->threshold);
             }
             if (hit) {
                 matches++;
@@ -223,6 +392,8 @@ int main(void)
     static app_ctx a;
     config_defaults(&a.cfg);
     g_mutex_init(&a.gal_lock);
+    g_mutex_init(&a.pharos_lock);
+    a.min_eye_px = (float)a.cfg.min_eye_px;
     a.threshold = a.cfg.match_threshold;
     a.overlay_on = TRUE;
     a.file_gallery_path = (char *)a.cfg.gallery_path;
@@ -250,7 +421,8 @@ int main(void)
     g_free(gal);
 
     if (a.params) {
-        const char *names[] = { "Gallery", "MatchThreshold", "Overlay" };
+        const char *names[] = { "Gallery", "MatchThreshold", "Overlay", "PharosUrl", "PharosDeviceId",
+                                "PharosToken", "PharosServerCert" };
         for (size_t i = 0; i < G_N_ELEMENTS(names); i++)
             if (!ax_parameter_register_callback(a.params, names[i], on_param, &a, &err)) {
                 syslog(LOG_WARNING, "watch %s: %s", names[i], err ? err->message : "?");
@@ -258,6 +430,10 @@ int main(void)
             }
     }
 
+    if (a.params) pharos_restart_thread(&a);          /* initial start (synchronous, no client yet) */
+
+    /* fontconfig (used by cairo text) needs a writable cache dir */
+    g_setenv("XDG_CACHE_HOME", AURIX_APP_DIR "/localdata", TRUE);
     overlay_init();
     a.cap = a.det ? capture_open(a.cfg.width, a.cfg.height, a.cfg.fps) : NULL;
 
@@ -274,6 +450,10 @@ int main(void)
 
     g_atomic_int_set(&a.running, 0);
     if (th) g_thread_join(th);
+    g_mutex_lock(&a.pharos_lock);
+    pharos_stop(a.pharos);
+    a.pharos = NULL;
+    g_mutex_unlock(&a.pharos_lock);
     overlay_cleanup();
     capture_close(a.cap);
     detector_close(a.det);

@@ -1,0 +1,48 @@
+{
+  "configRevision": 42,
+  "config": {
+    "site.zones": [
+      "Lobby"
+    ],
+    "site.timeZone": "America/Los_Angeles",
+    "reporting.mode": "watchlist",
+    "reporting.strangers": true,
+    "recognition.matchThreshold": 0.62,
+    "events.trackCloseSec": 3,
+    "sync.intervalMs": 3000,
+    "sync.keepAllPeople": true,
+    "access.reportDecisions": false,
+    "x.futureKey": 1
+  },
+  "commands": [
+    {
+      "commandId": "c-78",
+      "type": "resync",
+      "args": {}
+    },
+    {
+      "commandId": "c-79",
+      "type": "relayPulse",
+      "args": {
+        "ms": 3000,
+        "reason": "operator",
+        "operator": "jdoe"
+      }
+    },
+    {
+      "commandId": "c-80",
+      "type": "reenroll",
+      "args": {
+        "personIds": []
+      }
+    },
+    {
+      "commandId": "c-81",
+      "type": "someFutureCommand",
+      "args": {
+        "x": 1
+      }
+    }
+  ],
+  "nextStatusInMs": 2000
+}

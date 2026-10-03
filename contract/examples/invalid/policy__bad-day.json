@@ -1,0 +1,27 @@
+{
+  "policyId": "pol-staff-lobby",
+  "name": "Staff \u2013 Lobby",
+  "banned": false,
+  "allZonesAllTimes": false,
+  "rules": [
+    {
+      "zones": [
+        "Lobby",
+        "East Entry"
+      ],
+      "schedule": [
+        {
+          "days": [
+            "monday"
+          ],
+          "start": "07:00",
+          "end": "19:00"
+        }
+      ],
+      "excludedDates": [
+        "2026-12-25",
+        "2027-01-01"
+      ]
+    }
+  ]
+}

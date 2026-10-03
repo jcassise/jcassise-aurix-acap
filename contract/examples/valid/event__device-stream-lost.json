@@ -1,0 +1,12 @@
+{
+  "eventId": "1a2b3c4d-0000-4000-8000-000000000003",
+  "revision": 1,
+  "deviceId": "aurix-lobby-01",
+  "kind": "device",
+  "startedAt": 1790986000000,
+  "updatedAt": 1790986000000,
+  "device": {
+    "type": "stream_lost",
+    "detail": "main: RTSP timeout"
+  }
+}

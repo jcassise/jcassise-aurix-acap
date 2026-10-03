@@ -1,0 +1,23 @@
+{
+  "personId": "p-1043",
+  "revision": 1884,
+  "externalRef": "HR-00791",
+  "displayName": "Dana Ruiz",
+  "firstName": "Dana",
+  "lastName": "Ruiz",
+  "personType": "employee",
+  "watchlist": "no_concern",
+  "policyIds": [
+    "pol-staff-lobby"
+  ],
+  "validFrom": 1767225600000,
+  "validUntil": null,
+  "photos": [
+    {
+      "photoId": "ph-88",
+      "sha256": "9f2c",
+      "kind": "face",
+      "updatedAt": 1790900000000
+    }
+  ]
+}

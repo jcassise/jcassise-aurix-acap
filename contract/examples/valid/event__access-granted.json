@@ -1,0 +1,26 @@
+{
+  "eventId": "1a2b3c4d-0000-4000-8000-000000000001",
+  "revision": 2,
+  "deviceId": "aurix-lobby-01",
+  "kind": "access",
+  "startedAt": 1790985800000,
+  "updatedAt": 1790985801000,
+  "endedAt": 1790985804000,
+  "zone": "Lobby",
+  "person": {
+    "personId": "p-1043",
+    "displayName": "Dana Ruiz",
+    "watchlist": "no_concern"
+  },
+  "stranger": false,
+  "match": {
+    "score": 0.82,
+    "threshold": 0.62
+  },
+  "access": {
+    "evaluated": true,
+    "decision": "granted",
+    "reason": "policy",
+    "policyId": "pol-staff-lobby"
+  }
+}

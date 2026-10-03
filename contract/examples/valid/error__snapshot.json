@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "snapshot_expired",
+    "message": "Snapshot 1890 expired; restart sync."
+  }
+}

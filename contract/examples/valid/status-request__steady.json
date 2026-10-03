@@ -1,0 +1,60 @@
+{
+  "time": 1790985602000,
+  "appliedConfigRevision": 41,
+  "appliedConfig": {
+    "site.zones": [
+      "Lobby"
+    ],
+    "site.timeZone": "America/Los_Angeles",
+    "reporting.mode": "watchlist",
+    "reporting.strangers": true,
+    "recognition.matchThreshold": 0.62,
+    "events.trackCloseSec": 3,
+    "sync.intervalMs": 3000,
+    "sync.keepAllPeople": true,
+    "access.reportDecisions": false
+  },
+  "rejectedConfig": [
+    {
+      "key": "recognition.minFaceSizePx",
+      "reason": "out of range 40..400"
+    }
+  ],
+  "unsupportedConfig": [
+    "relay.pulseMs"
+  ],
+  "sync": {
+    "revision": 1882,
+    "policiesRevision": 77,
+    "people": 412,
+    "templatesReady": 409,
+    "templatesFailed": 3,
+    "inProgress": "none",
+    "lastSuccessAt": 1790985590000,
+    "lastError": null
+  },
+  "queue": {
+    "eventsPending": 0,
+    "imagesPending": 0,
+    "oldestPendingAt": null
+  },
+  "health": {
+    "cpuPct": 38,
+    "tempC": 51,
+    "fps": 12,
+    "streams": [
+      {
+        "id": "main",
+        "ok": true
+      }
+    ],
+    "clockDriftMs": 40
+  },
+  "commandResults": [
+    {
+      "commandId": "c-77",
+      "status": "done",
+      "detail": null
+    }
+  ]
+}
