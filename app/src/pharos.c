@@ -499,7 +499,17 @@ static upload_result upload_events(pharos *p, long long deadline)
         for (int k = 0; k < 2 && res == UP_OK && event_known; k++) {
             if (!imgs[k].data) continue;
             snprintf(path, sizeof path, "/events/%s/images/%s", it.event_id, imgs[k].kind);
+            const unsigned char *d = imgs[k].data;
+            size_t L = imgs[k].len;
+            int whole = L > 4 && d[0] == 0xFF && d[1] == 0xD8 && d[2] == 0xFF && d[L - 2] == 0xFF && d[L - 1] == 0xD9;
             ph_response r = ph_request(p->http, "PUT", path, imgs[k].data, imgs[k].len, "image/jpeg", 30);
+            /* what left the camera: declared length, bytes libcurl actually sent, and the JPEG's ends */
+            static unsigned logged;
+            if (!whole || r.uploaded != (long long)L || ++logged <= 20)
+                syslog(!whole || r.uploaded != (long long)L ? LOG_WARNING : LOG_INFO,
+                       "pharos: %s image of event %.8s: declared %zu bytes, sent %lld, starts %02x%02x%02x, ends %02x%02x%s -> HTTP %ld",
+                       imgs[k].kind, it.event_id, L, r.uploaded, L > 2 ? d[0] : 0, L > 2 ? d[1] : 0, L > 2 ? d[2] : 0,
+                       L > 1 ? d[L - 2] : 0, L > 1 ? d[L - 1] : 0, whole ? " (whole JPEG)" : " (NOT a whole JPEG)", r.status);
             if (r.err != PH_OK || r.status == 429 || r.status >= 500) res = UP_STOP;
             else if (r.status == 401) res = UP_AUTH;
             else if (r.status == 410) res = UP_REVOKED;

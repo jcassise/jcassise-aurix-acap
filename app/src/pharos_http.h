@@ -27,6 +27,7 @@ typedef struct {
     char *body;                /* NUL-terminated, malloc'd (may contain binary for JPEG) */
     size_t body_len;
     int retry_after_s;         /* -1 if absent */
+    long long uploaded;        /* request body bytes libcurl actually sent */
     int json;                  /* Content-Type is application/json */
     char errmsg[256];
 } ph_response;

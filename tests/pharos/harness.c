@@ -10,6 +10,7 @@
 #include "event_queue.h"
 #include "tracker.h"
 #include <time.h>
+#include <openssl/sha.h>
 
 static int resyncs;
 
@@ -92,8 +93,23 @@ static void push_test_events(const char *device_id, int n, int with_scene)
         const char *wl = known ? "threat" : NULL;
         event_ctx c = { device_id, "mobilefacenet-128-int8-dlpu", "Lobby", 0.45f, wl, 0, { 0, "", "" }, 1, with_scene, 0 };
         size_t fl = 0, sl = 0;
-        unsigned char *face = jpeg_encode_rgb(&img, 85, &fl);
-        unsigned char *scene = with_scene ? jpeg_encode_rgb(&img, 75, &sl) : NULL;
+        unsigned char *face, *scene;
+        if (getenv("AURIX_TEST_BIG_IMAGES")) {          /* camera-sized pictures with lots of detail (big JPEGs) */
+            static unsigned char fp[480 * 480 * 3], sp[1280 * 960 * 3];
+            unsigned x = 12345u + (unsigned)v;
+            for (size_t i = 0; i < sizeof fp; i++) { x = x * 1103515245u + 12345u; fp[i] = (unsigned char)((x >> 16) ^ (i / 1440)); }
+            for (size_t i = 0; i < sizeof sp; i++) { x = x * 1103515245u + 12345u; sp[i] = (unsigned char)((x >> 18) + (i % 3840) / 15); }
+            aurix_image fi = { fp, 480, 480, 480 * 3, 3 }, si = { sp, 1280, 960, 1280 * 3, 3 };
+            face = jpeg_encode_rgb(&fi, 85, &fl);
+            scene = with_scene ? jpeg_encode_rgb(&si, 75, &sl) : NULL;
+        } else {
+            face = jpeg_encode_rgb(&img, 85, &fl);
+            scene = with_scene ? jpeg_encode_rgb(&img, 75, &sl) : NULL;
+        }
+        unsigned char h[32];
+        SHA256(face, fl, h);
+        printf("SENT face %s %zu ", tr.t[ti].event_id, fl); for (int b = 0; b < 32; b++) printf("%02x", h[b]); printf("\n");
+        if (scene) { SHA256(scene, sl, h); printf("SENT scene %s %zu ", tr.t[ti].event_id, sl); for (int b = 0; b < 32; b++) printf("%02x", h[b]); printf("\n"); }
         json_t *e1 = event_build(&tr.t[ti], 1, 0, now, &c);
         char *j1 = json_dumps(e1, JSON_COMPACT | JSON_REAL_PRECISION(6));
         json_decref(e1);

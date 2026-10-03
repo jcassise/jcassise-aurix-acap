@@ -438,6 +438,10 @@ ph_response ph_request(ph_client *c, const char *method, const char *path,
     apply_tls(c, h);
 
     CURLcode rc = curl_easy_perform(h);
+    {
+        curl_off_t up = 0;
+        if (curl_easy_getinfo(h, CURLINFO_SIZE_UPLOAD_T, &up) == CURLE_OK) r.uploaded = (long long)up;
+    }
     curl_slist_free_all(hl);
     if (rc == CURLE_SSL_PINNEDPUBKEYNOTMATCH) {
         r.err = PH_ERR_TLS_PIN;

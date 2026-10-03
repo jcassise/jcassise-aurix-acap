@@ -78,6 +78,33 @@ check("E3 no scene image when scene images are off", len(sim.events) == 2 and al
       and not any(k == "scene" for (_e, k) in sim.images), str(list(sim.images)))
 sim.stop()
 
+# E4: camera-sized pictures arrive whole and byte-for-byte identical; the camera log says what left it
+import hashlib, io
+from PIL import Image
+sim = Sim(tempfile.mkdtemp()).start()
+out = run(sim, 6, 3, extra_env={"AURIX_TEST_BIG_IMAGES": "1"})
+sent = {}
+for l in out.splitlines():
+    if l.startswith("SENT "):
+        _, kind, eid, n, sha = l.split()
+        sent[(eid, kind)] = (int(n), sha)
+same = all(k in sim.images and len(sim.images[k]) == n and hashlib.sha256(sim.images[k]).hexdigest() == sha
+           for k, (n, sha) in sent.items())
+sizes = sorted(n for n, _ in sent.values())
+check("E4 camera-sized pictures stored byte-for-byte identical", len(sent) == 6 and same, f"{len(sent)} sent, sizes {sizes[:2]}..{sizes[-1:]}")
+ends = all(raw[-2:] == b"\xff\xd9" for raw in sim.images.values())
+def decodes(raw):
+    try:
+        Image.open(io.BytesIO(raw)).load(); return True
+    except Exception:
+        return False
+check("E4 every stored picture ends FF D9 and decodes", ends and all(decodes(r) for r in sim.images.values()))
+logl = [l for l in out.splitlines() if " image of event " in l and "declared" in l]
+check("E4 camera log: declared = sent, whole JPEG, for each picture",
+      len(logl) == 6 and all("(whole JPEG)" in l and l.split("declared ")[1].split(" bytes")[0] == l.split("sent ")[1].split(",")[0] for l in logl),
+      (logl[:1] or ["no log lines"])[0])
+sim.stop()
+
 failed = [n for n, ok in results if not ok]
 print(f"\n{len(results) - len(failed)}/{len(results)} passed")
 sys.exit(1 if failed else 0)
