@@ -278,3 +278,18 @@ double gallery_benchmark_ns_per_entry(uint32_t dim, uint32_t entries, int rounds
     free(q);
     return ns;
 }
+
+float gallery_score_for(const aurix_gallery *g, const int8_t *q, const char *key)
+{
+    if (!g || !g->count || !key || !*key) return -1.0f;
+    int32_t qn = dot_s8(q, q, g->dim);
+    if (qn <= 0) return -1.0f;
+    float qinv = 1.0f / sqrtf((float)qn), best = -1.0f;
+    for (uint32_t i = 0; i < g->count; i++) {
+        const char *k = g->refs[i][0] ? g->refs[i] : g->ids[i];
+        if (strcmp(k, key)) continue;
+        float s = dot_s8(q, g->emb + (size_t)i * g->dim, g->dim) * qinv * g->inv_norm[i];
+        if (s > best) best = s;
+    }
+    return best;
+}

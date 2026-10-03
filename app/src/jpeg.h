@@ -9,4 +9,7 @@
  * out->data, or -1 with why filled. */
 int jpeg_decode_rgb(const unsigned char *data, size_t len, int max_side, aurix_image *out, char *why, size_t why_len);
 
+/* Encodes packed RGB to JPEG (quality 1-100). Returns a malloc'd buffer and its size, or NULL. */
+unsigned char *jpeg_encode_rgb(const aurix_image *img, int quality, size_t *out_len);
+
 #endif

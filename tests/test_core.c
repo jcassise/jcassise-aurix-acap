@@ -11,6 +11,9 @@
 #include "sysinfo.h"
 #include "capacity.h"
 #include "jpeg.h"
+#include "tracker.h"
+#include "access.h"
+#include <glib.h>
 
 #ifndef FIXTURES
 #define FIXTURES "fixtures"
@@ -327,6 +330,143 @@ static void test_jpeg_and_letterbox(void)
     CHECK(jpeg_decode_rgb((const unsigned char *)"not a jpeg at all", 17, 1600, &im, why, sizeof why) != 0 && why[0], "garbage accepted");
 }
 
+static void test_tracker(void)
+{
+    trk_params p = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000 };
+    tracker tr;
+    tracker_init(&tr, &p);
+    float b[2][4] = { { 100, 100, 200, 220 }, { 600, 100, 700, 220 } };
+    int ti[2];
+    long long t = 1000;
+    /* T1 a known face: locks after two confident frames, one track */
+    tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
+    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.60f, -1, 0.5f, 100, t);
+    CHECK(tr.t[ti[0]].state == TS_PENDING, "locked after one frame");
+    t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
+    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.58f, -1, 0.5f, 100, t);
+    CHECK(tr.t[ti[0]].state == TS_KNOWN && tr.t[ti[0]].needs_emit && !strcmp(tr.t[ti[0]].name, "Dana"), "not locked after two");
+    int first = ti[0];
+    char eid[37]; memcpy(eid, tr.t[first].event_id, 37);
+    tr.t[first].needs_emit = 0; tr.t[first].revision = 1;
+    /* T2 head turns: weak scores keep the name, no new event */
+    for (int k = 0; k < 5; k++) {
+        t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
+        int split = tracker_observe(&tr, ti[0], "p-9", "Other", "p-9", 0, 0.30f, 0.20f, 0.3f, 100, t);
+        CHECK(!split && ti[0] == first && tr.t[first].state == TS_KNOWN && !tr.t[first].needs_emit, "weak frame changed the track");
+    }
+    /* T3 confidently someone else three times in a row -> split */
+    int split = 0;
+    for (int k = 0; k < 3; k++) {
+        t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
+        split = tracker_observe(&tr, ti[0], "p-9", "Other", "p-9", 0, 0.70f, 0.20f, 0.5f, 100, t);
+    }
+    CHECK(split == 1, "no split after three confident matches to someone else");
+    trk_track closed;
+    tracker_close(&tr, first, t, &closed);
+    CHECK(!strcmp(closed.event_id, eid) && closed.ended_ms == t, "split did not close the original event");
+    /* T4 stranger after three unconfident frames, recognised later in the same visit */
+    t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
+    for (int k = 0; k < 3; k++) {
+        tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.20f, -1, 0.4f, 100, t);
+        t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
+    }
+    CHECK(tr.t[ti[0]].state == TS_STRANGER, "not a stranger after three frames");
+    memcpy(eid, tr.t[ti[0]].event_id, 37);
+    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.60f, -1, 0.5f, 100, t);
+    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.60f, -1, 0.5f, 100, t);
+    CHECK(tr.t[ti[0]].state == TS_KNOWN && !strcmp(tr.t[ti[0]].event_id, eid), "stranger not upgraded within the same event");
+    /* T5 leaves: closed after close_ms, ended at last sighting */
+    long long last = t;
+    trk_track out[4];
+    CHECK(tracker_expire(&tr, last + 2900, out, 4) == 0, "closed too early");
+    CHECK(tracker_expire(&tr, last + 3100, out, 4) == 1 && out[0].ended_ms == last, "not closed after the absence");
+    /* T6 two people side by side -> two tracks that keep their identity */
+    t += 5000; tracker_associate(&tr, (const float (*)[4])b, 2, t, ti);
+    int a0 = ti[0], a1 = ti[1];
+    for (int k = 0; k < 5; k++) {
+        b[0][0] += 8; b[0][2] += 8; b[1][0] -= 8; b[1][2] -= 8;
+        t += 100; tracker_associate(&tr, (const float (*)[4])b, 2, t, ti);
+        CHECK(ti[0] == a0 && ti[1] == a1, "people swapped tracks");
+    }
+    /* T7 low frame rate: the face moved past its old box but is the same size and close -> same track */
+    float j[1][4] = { { b[0][0] + 85, b[0][1] + 10, b[0][2] + 85, b[0][3] + 10 } };
+    t += 600; tracker_associate(&tr, (const float (*)[4])j, 1, t, ti);
+    CHECK(ti[0] == a0, "jump at low frame rate started a new track");
+}
+
+static long long la_ms(int y, int mo, int d, int h, int mi)
+{
+    GTimeZone *tz = g_time_zone_new_identifier("America/Los_Angeles");
+    GDateTime *dt = g_date_time_new(tz, y, mo, d, h, mi, 0);
+    long long ms = (long long)g_date_time_to_unix(dt) * 1000;
+    g_date_time_unref(dt);
+    g_time_zone_unref(tz);
+    return ms;
+}
+
+static void test_access(void)
+{
+    json_t *pol = json_loads("[{\"policyId\":\"staff\",\"name\":\"Staff\",\"banned\":false,\"allZonesAllTimes\":false,"
+        "\"rules\":[{\"zones\":[\"Lobby\"],\"schedule\":[{\"days\":[\"mon\",\"tue\",\"wed\",\"thu\",\"fri\"],\"start\":\"07:00\",\"end\":\"19:00\"}],"
+        "\"excludedDates\":[\"2026-12-25\"]}]},"
+        "{\"policyId\":\"admin\",\"name\":\"Admin\",\"banned\":false,\"allZonesAllTimes\":true,\"rules\":[]},"
+        "{\"policyId\":\"ban\",\"name\":\"Banned\",\"banned\":true,\"allZonesAllTimes\":false,\"rules\":[]}]", 0, NULL);
+    const char zones[1][128] = { "Lobby" }, other[1][128] = { "Vault" };
+    const char *staff[] = { "staff" }, *admin[] = { "admin" }, *both[] = { "admin", "ban" };
+    const char *tz = "America/Los_Angeles";
+    access_result r;
+    r = access_evaluate(staff, 1, -1, -1, 0, pol, zones, 1, tz, la_ms(2026, 10, 7, 18, 59));   /* Wednesday */
+    CHECK(r.granted && !strcmp(r.policy_id, "staff"), "18:59 should be granted (%s)", r.reason);
+    r = access_evaluate(staff, 1, -1, -1, 0, pol, zones, 1, tz, la_ms(2026, 10, 7, 19, 1));
+    CHECK(!r.granted && !strcmp(r.reason, "schedule"), "19:01 should be denied by schedule (%s)", r.reason);
+    r = access_evaluate(staff, 1, -1, -1, 0, pol, zones, 1, tz, la_ms(2026, 12, 25, 10, 0));
+    CHECK(!r.granted && !strcmp(r.reason, "excluded_date"), "excluded date (%s)", r.reason);
+    r = access_evaluate(staff, 1, -1, -1, 0, pol, zones, 1, tz, la_ms(2026, 10, 10, 10, 0));   /* Saturday */
+    CHECK(!r.granted && !strcmp(r.reason, "schedule"), "weekend (%s)", r.reason);
+    r = access_evaluate(staff, 1, -1, -1, 0, pol, other, 1, tz, la_ms(2026, 10, 7, 10, 0));
+    CHECK(!r.granted && !strcmp(r.reason, "zone"), "other zone (%s)", r.reason);
+    r = access_evaluate(admin, 1, -1, -1, 0, pol, other, 1, tz, la_ms(2026, 10, 10, 3, 0));
+    CHECK(r.granted && !strcmp(r.policy_id, "admin"), "all zones all times (%s)", r.reason);
+    r = access_evaluate(both, 2, -1, -1, 0, pol, zones, 1, tz, la_ms(2026, 10, 7, 10, 0));
+    CHECK(!r.granted && !strcmp(r.reason, "banned"), "banned wins (%s)", r.reason);
+    r = access_evaluate(admin, 1, -1, -1, 1, pol, zones, 1, tz, la_ms(2026, 10, 7, 10, 0));
+    CHECK(!r.granted && !strcmp(r.reason, "watchlist"), "threat always denied (%s)", r.reason);
+    r = access_evaluate(admin, 1, la_ms(2026, 11, 1, 0, 0), -1, 0, pol, zones, 1, tz, la_ms(2026, 10, 7, 10, 0));
+    CHECK(!r.granted && !strcmp(r.reason, "validity"), "not yet valid (%s)", r.reason);
+    r = access_evaluate(NULL, 0, -1, -1, 0, pol, zones, 1, tz, la_ms(2026, 10, 7, 10, 0));
+    CHECK(!r.granted && !strcmp(r.reason, "no_policy"), "no policy (%s)", r.reason);
+    json_decref(pol);
+}
+
+/* The behaviour John asked for: someone lingering and turning their head = one event, not one per match. */
+static void test_linger_one_event(void)
+{
+    trk_params p = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000 };
+    tracker tr;
+    tracker_init(&tr, &p);
+    long long t = 0;
+    int opens = 0, closes = 0, splits = 0, ti;
+    unsigned seed = 7;
+    for (int f = 0; f < 600; f++) {                       /* 60 s at 10 fps */
+        seed = seed * 1103515245u + 12345u;
+        float jx = (float)((seed >> 16) % 13) - 6, jy = (float)((seed >> 8) % 9) - 4;   /* box jitter */
+        float b[1][4] = { { 500 + jx, 300 + jy, 640 + jx, 470 + jy } };
+        t += 100;
+        tracker_associate(&tr, (const float (*)[4])b, 1, t, &ti);
+        if (tracker_wants_embed(&tr, ti, t)) {
+            /* head turns: every third check is weak (0.28), the rest ~0.55 */
+            float sc = (f % 30 < 10) ? 0.28f : 0.55f;
+            float own = tr.t[ti].state == TS_KNOWN ? sc : -1;
+            splits += tracker_observe(&tr, ti, "p-1", "Dana", "p-1", 0, sc, own, 0.6f, 140, t);
+        }
+        if (tr.t[ti].needs_emit) { opens += tr.t[ti].revision == 0; tr.t[ti].revision++; tr.t[ti].needs_emit = 0; }
+    }
+    trk_track out[TRK_MAX];
+    int nc = tracker_expire(&tr, t + 3500, out, TRK_MAX);   /* walks away */
+    for (int k = 0; k < nc; k++) closes += out[k].revision > 0;
+    CHECK(opens == 1 && closes == 1 && splits == 0, "linger: %d opens, %d closes, %d splits", opens, closes, splits);
+}
+
 int main(void)
 {
     test_align_recovers_known_transform();
@@ -342,6 +482,9 @@ int main(void)
     test_sysinfo_parsers();
     test_capacity();
     test_jpeg_and_letterbox();
+    test_tracker();
+    test_access();
+    test_linger_one_event();
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

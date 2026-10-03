@@ -45,6 +45,9 @@ int32_t dot_s8(const int8_t *a, const int8_t *b, uint32_t dim);
 /* Best cosine match. Returns index or -1 (empty gallery / zero query). */
 int gallery_best(const aurix_gallery *g, const int8_t *q, float *score);
 
+/* Best score among entries of one person (key = ref, or name for local entries). -1 if none. */
+float gallery_score_for(const aurix_gallery *g, const int8_t *q, const char *key);
+
 /* Bytes held in RAM by the gallery's arrays (allocated capacity). */
 unsigned long gallery_bytes(const aurix_gallery *g);
 

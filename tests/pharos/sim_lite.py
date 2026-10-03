@@ -59,7 +59,13 @@ class Sim:
         self.device_id, self.token = device_id, token
         self.cert = make_cert(workdir)
         self.v = {n: schema(n) for n in ["hello-request", "hello-response", "status-request", "status-response",
-                                         "people-page", "deletions-response", "sync-state", "policies-response"]}
+                                         "people-page", "deletions-response", "sync-state", "policies-response",
+                                         "event", "event-ack"]}
+        self.events = {}            # eventId -> latest stored body
+        self.event_puts = []        # (eventId, revision, applied)
+        self.images = {}            # (eventId, kind) -> bytes
+        self.image_early = 0        # images that arrived before their event (404 returned)
+        self.offline = False        # refuse event/image uploads with 503
         self.people = {}            # personId -> record (without photo bytes)
         self.photos = {}            # (personId, photoId) -> bytes
         self.revision = 0
@@ -228,6 +234,56 @@ class Sim:
                         page["deleted"] = [{"personId": p, "revision": rv} for p, rv in sim.deletions if rv > since]
                 self.check("people-page", {k: v for k, v in page.items() if k != "deleted"})
                 self.reply(200, page)
+
+            def do_PUT(self):
+                n = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(n)
+                path = self.path
+                with sim.lock:
+                    sim.log.append((path, None, None))
+                if not self.auth_ok():
+                    return
+                if sim.offline:
+                    return self.err(503, "unavailable", "offline", headers={"Retry-After": "1"})
+                parts = path.split("/")
+                if len(parts) == 5 and parts[3] == "events":
+                    eid = parts[4]
+                    try:
+                        body = json.loads(raw)
+                    except Exception:
+                        return self.err(400, "bad_request", "json")
+                    errs = list(sim.v["event"].iter_errors(body))
+                    for e in errs:
+                        sim.violations.append(f"event: {e.message}")
+                    if errs or body.get("eventId") != eid:
+                        return self.err(400, "bad_request", "schema")
+                    with sim.lock:
+                        cur = sim.events.get(eid)
+                        applied = cur is None or body["revision"] > cur["revision"]
+                        if applied:
+                            sim.events[eid] = body
+                        stored = sim.events[eid]["revision"]
+                        sim.event_puts.append((eid, body["revision"], applied))
+                    ack = {"eventId": eid, "applied": applied, "storedRevision": stored}
+                    self.check("event-ack", ack)
+                    return self.reply(200, ack)
+                if len(parts) == 7 and parts[3] == "events" and parts[5] == "images" and parts[6] in ("face", "scene"):
+                    eid, kind = parts[4], parts[6]
+                    with sim.lock:
+                        known = eid in sim.events
+                        if not known:
+                            sim.image_early += 1
+                    if not known:
+                        return self.err(404, "event_unknown", "event first")
+                    if len(raw) > 2 * 1024 * 1024:
+                        return self.err(413, "image_too_large", "2 MiB")
+                    if raw[:2] != b"\xff\xd8":
+                        sim.violations.append(f"image {kind} is not a JPEG")
+                    with sim.lock:
+                        sim.images[(eid, kind)] = raw
+                    self.send_response(204); self.send_header("Content-Length", "0"); self.end_headers()
+                    return
+                self.err(404, "not_found", path)
 
             def do_POST(self):
                 n = int(self.headers.get("Content-Length", 0))

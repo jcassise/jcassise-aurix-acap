@@ -183,6 +183,7 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
         <dt>Loaded from</dt><dd id="source">–</dd>
         <dt>Last sync from Pharos</dt><dd id="lastSync">–</dd>
         <dt>Face templates ready / failed / waiting</dt><dd id="tpl">–</dd>
+        <dt>Events waiting to send</dt><dd id="evq">–</dd>
         <dt>Pharos</dt><dd id="pharosState">–</dd>
         <dt>Configuration revision</dt><dd id="rev">–</dd>
         <dt>Reporting mode</dt><dd id="mode">–</dd>
@@ -399,6 +400,9 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
     set("lastSync", sy.lastOkMs ? dur(Math.max(0, (Date.now() - sy.lastOkMs) / 1000)).replace(/^0 min$/, "under a minute") + " ago" : "Not yet");
     set("tpl", sy.people ? fmt(sy.templatesReady, 0) + " / " + fmt(sy.templatesFailed, 0) + " / " + fmt(sy.templatesPending, 0) : "–",
         sy.templatesFailed ? "warn" : "");
+    var ev = m.events || {};
+    set("evq", ev.pending === undefined ? "–" : fmt(ev.pending, 0) + (ev.imagesPending ? " (+" + ev.imagesPending + " images)" : "") +
+        (ev.dropped ? ", " + ev.dropped + " dropped" : ""), ev.dropped ? "warn" : "");
     set("pharosState", ph.state + (ph.detail ? ": " + ph.detail : ""));
     set("rev", ph.configRevision ? String(ph.configRevision) : "–");
     set("mode", r.mode || "–");
@@ -465,6 +469,7 @@ footer { margin-top: 30px; color: var(--muted); font-size: 13px; display: flex; 
         appRssKb: 88400, tempC: 54, uptimeS: 9 * 86400 + 4000, storageFreeKb: 402000, storageTotalKb: 1048576 },
       recognition: { threshold: 0.45, minEyePx: 40, mode: "watchlist", gallery: { total: 1236, allow: 1227, threat: 9, source: "Pharos" } },
       pharos: { state: "Connected", detail: "", configRevision: 42, sinceMs: now - 3600e3 },
+      events: { pending: 0, imagesPending: 0, dropped: 0 },
       sync: { revision: 1890, lastOkMs: now - 40e3, people: 412, templatesReady: 1236, templatesFailed: 3, templatesPending: 0 },
       capacity: { estimate: 47168, limitedBy: "storage", byMemory: 912000, byStorage: 47168, byMatching: 196078, nsPerEntry: 25.5,
         matchMsAtEstimate: 1.2, galleryRamBytes: 412 * 197, benchEntries: 4096,

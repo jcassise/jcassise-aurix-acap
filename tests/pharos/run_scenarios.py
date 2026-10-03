@@ -139,7 +139,7 @@ sim.stop()
 
 # S3 config round-trip with rejected and unsupported keys
 sim = fresh()
-sim.set_config({"site.zones": ["Lobby"], "site.timeZone": "America/Los_Angeles", "reporting.mode": "enrolled",
+sim.set_config({"device.role": "virtual_access", "site.zones": ["Lobby"], "site.timeZone": "America/Los_Angeles", "reporting.mode": "enrolled",
                 "recognition.matchThreshold": 0.5, "recognition.minFaceSizePx": 10, "recognition.liveness": True,
                 "relay.pulseMs": 3000, "future.knob": 7, "events.trackCloseSec": 5})
 out, sd = run(sim, 2)
@@ -147,7 +147,7 @@ last = sim.statuses()[-1]
 ac = last["appliedConfig"]
 rej = {r["key"] for r in last.get("rejectedConfig", [])}
 check("S3 applied revision read back", last["appliedConfigRevision"] == sim.config_rev, str(last["appliedConfigRevision"]))
-check("S3 values applied", ac.get("recognition.matchThreshold") == 0.5 and ac.get("reporting.mode") == "enrolled"
+check("S3 values applied", ac.get("device.role") == "virtual_access" and ac.get("recognition.matchThreshold") == 0.5 and ac.get("reporting.mode") == "enrolled"
       and ac.get("site.zones") == ["Lobby"] and ac.get("events.trackCloseSec") == 5, str(ac))
 check("S3 out-of-range and liveness rejected", {"recognition.minFaceSizePx", "recognition.liveness"} <= rej, str(rej))
 check("S3 unknown/unsupported keys listed", {"relay.pulseMs", "future.knob"} <= set(last.get("unsupportedConfig", [])))

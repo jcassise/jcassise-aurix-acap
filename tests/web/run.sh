@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 SRC=../../app/src
 HTML=../../app/web/dashboard.html
-cc -std=gnu11 -Wall -Wextra -I$SRC webhost.c $SRC/metrics.c $SRC/sysinfo.c $SRC/capacity.c $SRC/web.c $SRC/commission.c $SRC/pharos_http.c \
+cc -std=gnu11 -Wall -Wextra -I$SRC webhost.c $SRC/metrics.c $SRC/sysinfo.c $SRC/capacity.c $SRC/web.c $SRC/commission.c $SRC/pharos_http.c $SRC/event_queue.c \
    $(pkg-config --cflags --libs jansson fcgi openssl libcurl) -lpthread -o webhost
 SOCK=$(mktemp -u /tmp/aurix-web-XXXX.sock)
 FCGI_SOCK="$SOCK" ./webhost "$HTML" & PID=$!
@@ -38,5 +38,5 @@ PY
 rm -f post_nocsrf.http post_ok.http
 node dashboard.test.js "$HTML" metrics.json
 node commission.test.js "$HTML" metrics.json /tmp/aurix-tc.pem
-cc -std=gnu11 -Wall -Wextra -I$SRC test_commission.c $SRC/web.c $SRC/commission.c $SRC/metrics.c $SRC/sysinfo.c $SRC/capacity.c $SRC/pharos_http.c \
+cc -std=gnu11 -Wall -Wextra -I$SRC test_commission.c $SRC/web.c $SRC/commission.c $SRC/metrics.c $SRC/sysinfo.c $SRC/capacity.c $SRC/pharos_http.c $SRC/event_queue.c \
    $(pkg-config --cflags --libs jansson fcgi openssl libcurl) -lpthread -o test_commission && ./test_commission /tmp/aurix-tc.pem && rm -f test_commission

@@ -18,6 +18,9 @@
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 #endif
 #include "third_party/stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_WRITE_NO_STDIO
+#include "third_party/stb_image_write.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
@@ -50,4 +53,40 @@ int jpeg_decode_rgb(const unsigned char *data, size_t len, int max_side, aurix_i
     stbi_image_free(px);
     *out = (aurix_image){ copy, w, h, w * 3, 3 };
     return 0;
+}
+
+typedef struct { unsigned char *p; size_t n, cap; int bad; } outbuf;
+
+static void put(void *ctx, void *data, int size)
+{
+    outbuf *o = ctx;
+    if (o->bad || size <= 0) return;
+    if (o->n + (size_t)size > o->cap) {
+        size_t cap = (o->n + (size_t)size) * 2;
+        unsigned char *q = realloc(o->p, cap);
+        if (!q) { o->bad = 1; return; }
+        o->p = q;
+        o->cap = cap;
+    }
+    memcpy(o->p + o->n, data, (size_t)size);
+    o->n += (size_t)size;
+}
+
+unsigned char *jpeg_encode_rgb(const aurix_image *img, int quality, size_t *out_len)
+{
+    outbuf o = { NULL, 0, 0, 0 };
+    const unsigned char *px = img->data;
+    unsigned char *packed = NULL;
+    if (img->stride != img->w * 3) {               /* stb wants tightly packed rows */
+        packed = malloc((size_t)img->w * img->h * 3);
+        if (!packed) return NULL;
+        for (int y = 0; y < img->h; y++)
+            memcpy(packed + (size_t)y * img->w * 3, img->data + (size_t)y * img->stride, (size_t)img->w * 3);
+        px = packed;
+    }
+    int ok = stbi_write_jpg_to_func(put, &o, img->w, img->h, 3, px, quality);
+    free(packed);
+    if (!ok || o.bad) { free(o.p); return NULL; }
+    *out_len = o.n;
+    return o.p;
 }

@@ -1,6 +1,7 @@
 #include "pharos.h"
 #include "pharos_http.h"
 #include "sync.h"
+#include "event_queue.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <ifaddrs.h>
@@ -273,7 +274,7 @@ static outcome do_hello(pharos *p, int *backoff, long long *wait)
 {
     char ip[64];
     own_ip(ip, sizeof ip);
-    json_t *caps = json_pack("[s,s]", "face-recognition", "watchlist");
+    json_t *caps = json_pack("[s,s,s,s]", "face-recognition", "watchlist", "access-decision", "scene-images");
     json_t *plat = json_pack("{s:s,s:s,s:s,s:s}", "vendor", "axis", "model", p->s.hw_model, "serial", p->s.serial,
                              "firmware", p->s.firmware);
     if (ip[0]) json_object_set_new(plat, "ip", json_string(ip));
@@ -317,8 +318,10 @@ static json_t *build_status(pharos *p, json_t *results)
     pharos_snapshot s = { 0 };
     if (p->h.snapshot) p->h.snapshot(&s, p->h.user);
     json_t *sync = sync_status_json(p->sync);
-    json_t *queue = json_pack("{s:i,s:i,s:n}", "eventsPending", s.events_pending, "imagesPending", s.images_pending,
-                              "oldestPendingAt");
+    eq_stats q = eq_get_stats();
+    json_t *queue = json_pack("{s:i,s:i,s:o,s:i}", "eventsPending", q.events_pending, "imagesPending", q.images_pending,
+                              "oldestPendingAt", q.oldest_ms ? json_integer(q.oldest_ms + g_clock_offset_ms) : json_null(),
+                              "dropped", (int)q.dropped);
     json_t *health = json_pack("{s:f,s:I,s:[{s:s,s:b}]}", "fps", s.fps < 0 ? 0 : s.fps, "clockDriftMs",
                                (json_int_t)p->clock_drift_ms, "streams", "id", "main", "ok", s.stream_ok);
     double cpu = cpu_pct(p), t = temp_c();
@@ -410,6 +413,52 @@ static json_t *run_commands(pharos *p, json_t *cmds)
     return res;
 }
 
+/* ---------- events (§7) ---------- */
+
+typedef enum { UP_OK, UP_STOP, UP_AUTH, UP_REVOKED } upload_result;
+
+static upload_result upload_events(pharos *p, long long deadline)
+{
+    eq_item it;
+    char last[37] = "";
+    while (now_ms() < deadline && eq_take(&it)) {
+        if (!strcmp(last, it.event_id)) { eq_item_free(&it); break; }   /* no progress on this one now */
+        snprintf(last, sizeof last, "%s", it.event_id);
+        int rev = -1, face = -1, scene = -1;
+        upload_result res = UP_OK;
+        char path[128];
+        if (it.sent_revision < it.revision && it.json) {
+            snprintf(path, sizeof path, "/events/%s", it.event_id);
+            ph_response r = ph_request(p->http, "PUT", path, it.json, strlen(it.json), "application/json", 15);
+            if (r.err != PH_OK || r.status == 429 || r.status >= 500) res = UP_STOP;
+            else if (r.status == 401) res = UP_AUTH;
+            else if (r.status == 410) res = UP_REVOKED;
+            else if (r.status == 200) rev = it.revision;              /* applied, or stale: both final */
+            else { syslog(LOG_ERR, "pharos: event %s rejected (HTTP %ld): %.200s", it.event_id, r.status, r.body ? r.body : "");
+                   rev = it.revision; face = scene = 1; }             /* our bug: drop it, keep going */
+            ph_response_free(&r);
+        }
+        int event_known = rev >= it.revision || it.sent_revision >= it.revision;
+        const struct { const char *kind; unsigned char *data; size_t len; int *flag; } imgs[2] = {
+            { "face", it.face, it.face_len, &face }, { "scene", it.scene, it.scene_len, &scene } };
+        for (int k = 0; k < 2 && res == UP_OK && event_known; k++) {
+            if (!imgs[k].data) continue;
+            snprintf(path, sizeof path, "/events/%s/images/%s", it.event_id, imgs[k].kind);
+            ph_response r = ph_request(p->http, "PUT", path, imgs[k].data, imgs[k].len, "image/jpeg", 30);
+            if (r.err != PH_OK || r.status == 429 || r.status >= 500) res = UP_STOP;
+            else if (r.status == 401) res = UP_AUTH;
+            else if (r.status == 410) res = UP_REVOKED;
+            else if (r.status == 204 || r.status == 200 || r.status == 413 || r.status == 400) *imgs[k].flag = 1;
+            /* 404 event_unknown: the event is still queued behind; retry later */
+            ph_response_free(&r);
+        }
+        eq_mark(it.event_id, rev, face, scene);
+        eq_item_free(&it);
+        if (res != UP_OK) return res;
+    }
+    return UP_OK;
+}
+
 static void *run(void *arg)
 {
     pharos *p = arg;
@@ -473,8 +522,12 @@ static void *run(void *arg)
                     json_decref(b);
                     ph_response_free(&r);
                     /* identity sync in the time left before the next status report */
-                    long long budget = interval * 6 / 10;
-                    sync_result sr = sync_step(p->sync, p->http, &p->cfg, pharos_ms(), budget);
+                    /* events first (they are time-critical), then identity sync, in the time left */
+                    upload_result ur = upload_events(p, t0 + interval * 4 / 10);
+                    if (ur == UP_AUTH) { set_state(p, PS_CREDENTIALS_REJECTED, "check device ID and token"); o = OC_AUTH; wait = 60000; break; }
+                    if (ur == UP_REVOKED) { set_state(p, PS_REVOKED, "device revoked in Pharos"); o = OC_REVOKED; break; }
+                    long long budget = interval * 7 / 10 - (now_ms() - t0);
+                    sync_result sr = sync_step(p->sync, p->http, &p->cfg, pharos_ms(), budget > 100 ? budget : 100);
                     if (sr == SY_AUTH) { set_state(p, PS_CREDENTIALS_REJECTED, "check device ID and token"); o = OC_AUTH; wait = 60000; break; }
                     if (sr == SY_REVOKED) { set_state(p, PS_REVOKED, "device revoked in Pharos"); o = OC_REVOKED; break; }
                     long long left = interval - (now_ms() - t0);

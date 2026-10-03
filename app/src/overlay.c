@@ -2,6 +2,7 @@
 #include <axoverlay.h>
 #include <cairo/cairo.h>
 #include <glib.h>
+#include <math.h>
 #include <string.h>
 #include <syslog.h>
 
@@ -18,6 +19,8 @@ static void color_for(overlay_state s, double *r, double *g, double *b)
     case OV_ALLOW:  *r = 0.10; *g = 0.85; *b = 0.20; break;   /* green */
     case OV_THREAT: *r = 0.95; *g = 0.10; *b = 0.10; break;   /* red */
     case OV_CONCERN:*r = 1.00; *g = 0.65; *b = 0.00; break;   /* amber */
+    case OV_DENIED: *r = 0.85; *g = 0.20; *b = 0.85; break;   /* magenta */
+    case OV_ALERT:  *r = 1.00; *g = 0.35; *b = 0.10; break;   /* orange-red */
     case OV_UNKNOWN:*r = 0.15; *g = 0.45; *b = 1.00; break;   /* blue */
     default:        *r = 0.70; *g = 0.70; *b = 0.70; break;   /* grey */
     }
@@ -45,30 +48,56 @@ static void render_cb(gpointer ctx_ptr, gint id, struct axoverlay_stream_data *s
     redraw_pending = FALSE;
     g_mutex_unlock(&lock);
 
-    const double line = h / 270.0 > 2.0 ? h / 270.0 : 2.0;     /* ~4 px at 1080p */
-    const double font = h / 40.0 > 12.0 ? h / 40.0 : 12.0;
+    const double line = h / 160.0 > 3.0 ? h / 160.0 : 3.0;   /* ~7 px at 1080p: easy to follow */
+    const double font = h / 42.0 > 13.0 ? h / 42.0 : 13.0;
     cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
     cairo_set_font_size(cr, font);
 
     for (int i = 0; i < n; i++) {
         const overlay_box *bx = &local[i];
-        double x = bx->x0 * w, y = bx->y0 * h, bw = (bx->x1 - bx->x0) * w, bh = (bx->y1 - bx->y0) * h;
+        double cx = (bx->x0 + bx->x1) / 2 * w, cy = (bx->y0 + bx->y1) / 2 * h;
+        double rx = (bx->x1 - bx->x0) / 2 * w * 1.08, ry = (bx->y1 - bx->y0) / 2 * h * 1.15;   /* faces are taller */
+        if (rx < 4 || ry < 4) continue;
         double r, g, b;
         color_for(bx->state, &r, &g, &b);
-        cairo_set_source_rgba(cr, r, g, b, 1.0);
-        cairo_set_line_width(cr, bx->state == OV_PENDING ? line * 0.5 : line);
-        cairo_rectangle(cr, x, y, bw, bh);
+        double conf = bx->confidence < 0.3 ? 0.3 : bx->confidence > 1 ? 1 : bx->confidence;
+        double lw = bx->state == OV_PENDING ? line * 0.5 : line * (0.6 + 0.4 * conf);
+
+        /* ellipse path in a scaled frame, stroked in device space so the line width stays even */
+        cairo_save(cr);
+        cairo_translate(cr, cx, cy);
+        cairo_scale(cr, rx, ry);
+        cairo_arc(cr, 0, 0, 1, 0, 2 * G_PI);
+        cairo_restore(cr);
+        if (bx->state != OV_PENDING) {               /* soft glow under the line */
+            cairo_set_source_rgba(cr, r, g, b, 0.22 * conf);
+            cairo_set_line_width(cr, lw * 3.2);
+            cairo_stroke_preserve(cr);
+            cairo_set_source_rgba(cr, r, g, b, 0.35 * conf);
+            cairo_set_line_width(cr, lw * 1.9);
+            cairo_stroke_preserve(cr);
+        }
+        cairo_set_source_rgba(cr, fmin(1, r * 1.1 + 0.08), fmin(1, g * 1.1 + 0.08), fmin(1, b * 1.1 + 0.08),
+                              bx->state == OV_PENDING ? 0.7 : 0.55 + 0.45 * conf);
+        cairo_set_line_width(cr, lw);
         cairo_stroke(cr);
 
-        if (bx->label[0]) {
+        if (bx->label[0]) {                           /* rounded name pill above the head */
             cairo_text_extents_t te;
             cairo_text_extents(cr, bx->label, &te);
-            double ty = y - line > font * 1.3 ? y - line : y + bh + font * 1.3;
-            cairo_set_source_rgba(cr, r * 0.6, g * 0.6, b * 0.6, 0.75);
-            cairo_rectangle(cr, x, ty - font * 1.1, te.x_advance + font * 0.6, font * 1.35);
+            double pw = te.x_advance + font * 1.0, ph = font * 1.5, pr = ph / 2;
+            double px = cx - pw / 2, py = cy - ry - ph - line * 1.5;
+            if (py < 2) py = cy + ry + line * 1.5;    /* no room above: put it below the chin */
+            if (px < 2) px = 2;
+            if (px + pw > w - 2) px = w - 2 - pw;
+            cairo_new_sub_path(cr);
+            cairo_arc(cr, px + pw - pr, py + pr, pr, -G_PI / 2, G_PI / 2);
+            cairo_arc(cr, px + pr, py + pr, pr, G_PI / 2, 3 * G_PI / 2);
+            cairo_close_path(cr);
+            cairo_set_source_rgba(cr, r * 0.55, g * 0.55, b * 0.55, 0.85);
             cairo_fill(cr);
             cairo_set_source_rgba(cr, 1, 1, 1, 1);
-            cairo_move_to(cr, x + font * 0.3, ty - font * 0.1);
+            cairo_move_to(cr, px + font * 0.5, py + ph / 2 + te.height / 2 - 1);
             cairo_show_text(cr, bx->label);
         }
     }

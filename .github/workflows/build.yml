@@ -79,13 +79,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libjansson-dev
       - run: make -C tests run
 
   pharos-protocol:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libjansson-dev libssl-dev
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libjansson-dev libssl-dev libglib2.0-dev
       - run: pip install jsonschema cryptography openapi-spec-validator pyyaml pillow
       - name: Contract package is consistent
         run: python3 contract/tools/build_and_check.py

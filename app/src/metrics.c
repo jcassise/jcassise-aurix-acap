@@ -1,5 +1,6 @@
 #include "metrics.h"
 #include "capacity.h"
+#include "event_queue.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -259,6 +260,11 @@ json_t *metrics_json(void)
     }
     json_object_set_new(o, "pharos", json_pack("{s:s,s:s,s:I,s:I}", "state", M.ph_state, "detail", M.ph_detail,
         "configRevision", (json_int_t)M.ph_rev, "sinceMs", (json_int_t)M.ph_since));
+    {
+        eq_stats q = eq_get_stats();
+        json_object_set_new(o, "events", json_pack("{s:i,s:i,s:i}", "pending", q.events_pending, "imagesPending",
+                                                   q.images_pending, "dropped", (int)q.dropped));
+    }
     json_object_set_new(o, "sync", json_pack("{s:I,s:I,s:i,s:i,s:i,s:i}", "revision", (json_int_t)M.sy_rev,
         "lastOkMs", (json_int_t)M.sy_last_ok, "people", M.sy_people, "templatesReady", M.sy_ready,
         "templatesFailed", M.sy_failed, "templatesPending", M.sy_pending));

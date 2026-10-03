@@ -5,6 +5,8 @@
 
 static const char *MODES[] = { "watchlist", "enrolled", "all" };
 const char *pc_mode_name(pc_mode m) { return MODES[m]; }
+static const char *ROLES[] = { "watchlist", "virtual_access" };
+const char *pc_role_name(pc_role r) { return ROLES[r]; }
 
 /* Keys this AURIX build knows but cannot honour (no relay output, no local UI lock yet). */
 static const char *UNSUPPORTED_KNOWN[] = { "relay.enabled", "relay.pulseMs", "device.localUiEnabled", NULL };
@@ -118,6 +120,14 @@ void pc_apply(const json_t *desired, const pc_config *prev, double thr, pc_confi
             else o->mode = (pc_mode)m;
             continue;
         }
+        if (!strcmp(key, "device.role")) {
+            int r = -1;
+            if (json_is_string(v))
+                for (int i = 0; i < 2; i++) if (!strcmp(json_string_value(v), ROLES[i])) r = i;
+            if (r < 0) { reject(rej, key, "expected watchlist or virtual_access"); o->role = prev->role; }
+            else o->role = (pc_role)r;
+            continue;
+        }
         if (!strcmp(key, "site.timeZone")) {
             const char *tz = json_is_string(v) ? json_string_value(v) : NULL;
             if (!tz || strlen(tz) >= sizeof o->time_zone) { reject(rej, key, "expected IANA time zone name"); snprintf(o->time_zone, sizeof o->time_zone, "%s", prev->time_zone); }
@@ -156,6 +166,7 @@ json_t *pc_to_json(const pc_config *c)
     json_t *o = json_object();
     json_object_set_new(o, "site.zones", z);
     if (c->time_zone[0]) json_object_set_new(o, "site.timeZone", json_string(c->time_zone));
+    json_object_set_new(o, "device.role", json_string(ROLES[c->role]));
     json_object_set_new(o, "reporting.mode", json_string(MODES[c->mode]));
     json_object_set_new(o, "reporting.strangers", json_boolean(c->strangers));
     json_object_set_new(o, "reporting.noConcernSightings", json_boolean(c->no_concern_sightings));

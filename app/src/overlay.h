@@ -1,16 +1,18 @@
 /* AURIX - live-view overlay (axoverlay + cairo). Boxes are drawn on every video stream.
  *   green  = matched, allowed       red   = matched, threat      amber = matched, concern
- *   blue   = identified as unknown  grey  = face too small / not yet checked */
+ *   blue   = identified as unknown  grey  = face too small / not yet checked
+ *   magenta = known but not authorised here (virtual access)   orange-red = stranger in a restricted area */
 #ifndef AURIX_OVERLAY_H
 #define AURIX_OVERLAY_H
 #include "match.h"
 
-typedef enum { OV_PENDING = 0, OV_UNKNOWN, OV_ALLOW, OV_THREAT, OV_CONCERN } overlay_state;
+typedef enum { OV_PENDING = 0, OV_UNKNOWN, OV_ALLOW, OV_THREAT, OV_CONCERN, OV_DENIED, OV_ALERT } overlay_state;
 
 typedef struct {
     float x0, y0, x1, y1;          /* normalised 0..1 in the analysed frame */
     overlay_state state;
-    char label[AURIX_ID_LEN + 16];
+    float confidence;              /* 0..1: how settled the identity is (drawn as strength) */
+    char label[AURIX_ID_LEN + 24];
 } overlay_box;
 
 #define OVERLAY_MAX_BOXES 16

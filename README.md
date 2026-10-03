@@ -37,6 +37,10 @@ app/src/overlay.*      live-view boxes: green allow, red threat, blue unknown, g
 app/src/pharos*.{c,h}  AURIX–Pharos protocol v1 client: HTTPS + pinning, /hello, status loop,
                        config read-back, once-only commands, §8 errors/backoff
 app/src/metrics.*      live performance metrics (per-stage time, faces, matches, history)
+app/src/tracker.*      face tracking: one track per person in view, name locked then kept (one event per visit)
+app/src/events.*       which tracks are reported (role, reporting.*) and their Event JSON
+app/src/event_queue.*  offline queue: upsert by eventId, priority eviction (strangers first, Threat last)
+app/src/access.*       virtual-access decisions: policies, zones, schedules, excluded dates, time zone
 app/src/sync.*         identity sync with Pharos: poll, delta/full (staged, atomic), deletions, photos
 app/src/person_store.* people + on-camera templates, persisted in localdata/pharos/people.json
 app/src/enroll.*       photo -> template on the camera (same detector/aligner/embedder as live)
@@ -126,7 +130,17 @@ commands (`resync`, `reenroll` real), errors/backoff (§8), and **identity sync 
 and photos from Pharos become on-camera templates (one per photo, up to 5 per person);
 full syncs are staged and only applied when complete; deletions; policies stored; clock
 offset kept from Pharos `serverTime`. Watchlist classes: green = allowed, amber = Concern,
-red = Threat. Next: events and stills (§7).
+red = Threat.
+
+**Events (§7, 0.7.0):** faces are tracked; a name locks after two confident frames and is kept
+while the same face stays in view (head turns don't drop it). One event per visit: opened when the
+person is identified (or declared a stranger), updated if a clearly better face is seen, closed
+(`endedAt`) after `events.trackCloseSec` without the face. Face crop (≥240 px or native) and scene
+(1280×720) JPEGs follow each event. Watchlist role: Threat/Concern always, strangers as plain
+sightings. Virtual access: every decision is an access event (granted, or denied with reason; a
+stranger is `denied/stranger`). Offline: events queue on the camera and are delivered in order.
+Overlay: ellipses with a soft glow; magenta = known but not authorised, orange-red = stranger in a
+restricted area.
 
 ## Install and watch
 
