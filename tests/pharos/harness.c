@@ -70,7 +70,7 @@ static long long ms_now(void)
  * each with face and scene JPEGs, into the real queue -> uploader -> Pharos. */
 static void push_test_events(const char *device_id, int n, int with_scene)
 {
-    trk_params tp = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000 };
+    trk_params tp = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000, 0.30f };
     tracker tr;
     tracker_init(&tr, &tp);
     unsigned char px[64 * 64 * 3];
@@ -85,7 +85,7 @@ static void push_test_events(const char *device_id, int n, int with_scene)
         char key[16];
         snprintf(key, sizeof key, "p-%d", v);
         for (int f = 0; f < 3; f++)
-            tracker_observe(&tr, ti, known ? key : "", known ? "Test Person" : "", known ? key : "", known ? 1 : 0,
+            tracker_observe(&tr, ti, NULL, 0, known ? key : "", known ? "Test Person" : "", known ? key : "", known ? 1 : 0,
                             known ? 0.7f : 0.1f, -1, 0.5f + 0.1f * f, 120, now);
         const char *wl = known ? "threat" : NULL;
         event_ctx c = { device_id, "mobilefacenet-128-int8-dlpu", "Lobby", 0.45f, wl, 0, { 0, "", "" }, 1, with_scene, 0 };

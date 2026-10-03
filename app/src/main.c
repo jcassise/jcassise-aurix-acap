@@ -513,7 +513,7 @@ static gpointer worker(gpointer data)
     const unsigned max_faces = cfg->max_faces < AURIX_MAX_FACES ? cfg->max_faces : AURIX_MAX_FACES;
     double fps_t0 = now_s();
     unsigned fps_frames = 0;
-    trk_params tp = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000 };
+    trk_params tp = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000, 0.30f };   /* same_face 0.30: measured, see tracker.h */
     tracker tr;
     tracker_init(&tr, &tp);
 
@@ -603,7 +603,7 @@ static gpointer worker(gpointer data)
             float eye = landmarks_eye_distance(&faces[i].lm);
             float quality = faces[i].score * (eye >= 60 ? 1.0f : eye / 60.0f);
             int was_known = tr.t[ti].state == TS_KNOWN;
-            if (tracker_observe(&tr, ti, key, name, ref, cat, score, own, quality, (int)(faces[i].x1 - faces[i].x0), now))
+            if (tracker_observe(&tr, ti, q, dim, key, name, ref, cat, score, own, quality, (int)(faces[i].x1 - faces[i].x0), now))
                 splits[nsplit++] = ti;
             if (!was_known && tr.t[ti].state == TS_KNOWN)
                 metrics_match(tr.t[ti].name, tr.t[ti].category == AURIX_CAT_THREAT, tr.t[ti].best_score, 1);
@@ -612,11 +612,8 @@ static gpointer worker(gpointer data)
         metrics_faces(n, f_gated, f_emb);
 
         /* 3. events: new identities, better faces, splits, and visits that ended */
-        for (int k = 0; k < nsplit; k++) {
-            trk_track closed;
-            tracker_close(&tr, splits[k], now, &closed);
-            if (closed.revision) emit_event(a, &closed, 1, NULL, now, &pc, device_id);
-        }
+        for (int k = 0; k < nsplit; k++)        /* a different face: its event may continue if they come back */
+            tracker_detach(&tr, splits[k], now);
         for (int k = 0; k < TRK_MAX; k++) {
             trk_track *t = &tr.t[k];
             if (!t->active || !t->seen_now) continue;

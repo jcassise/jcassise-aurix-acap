@@ -330,57 +330,106 @@ static void test_jpeg_and_letterbox(void)
     CHECK(jpeg_decode_rgb((const unsigned char *)"not a jpeg at all", 17, 1600, &im, why, sizeof why) != 0 && why[0], "garbage accepted");
 }
 
+/* synthetic face embeddings: a fixed vector per person, plus per-frame noise (same person ~0.85-0.9) */
+static void person_vec(int person, float *v)
+{
+    unsigned x = 2654435761u * (unsigned)(person + 1);
+    for (int i = 0; i < TRK_DIM; i++) { x = x * 1103515245u + 12345u; v[i] = (float)((int)(x >> 16) % 2001 - 1000) / 1000.0f; }
+}
+
+static void face_emb(int person, unsigned *seed, int8_t *out, float noise)
+{
+    float v[TRK_DIM], n2 = 0;
+    person_vec(person, v);
+    for (int i = 0; i < TRK_DIM; i++) {
+        *seed = *seed * 1103515245u + 12345u;
+        v[i] += noise * (float)((int)(*seed >> 16) % 2001 - 1000) / 1000.0f;
+        n2 += v[i] * v[i];
+    }
+    float inv = 1.0f / sqrtf(n2);
+    for (int i = 0; i < TRK_DIM; i++) out[i] = (int8_t)lrintf(v[i] * inv * 127.0f);
+}
+
+/* gallery score of a face embedding against a person's template (the noise-free vector) */
+static float gscore(const int8_t *e, int person)
+{
+    float v[TRK_DIM], d = 0, a = 0, b = 0;
+    person_vec(person, v);
+    for (int i = 0; i < TRK_DIM; i++) { d += e[i] * v[i]; a += e[i] * e[i]; b += v[i] * v[i]; }
+    return d / sqrtf(a * b);
+}
+
+enum { P_DANA = 1, P_OTHER = 2, P_KYLE = 3, P_WOMAN = 4 };
+
+/* one detection's identity check, as main.c does it; gallery = { Dana, Other, Kyle } (the woman is not enrolled) */
+static int check(tracker *tr, int ti, int person, unsigned *seed, float noise, long long t)
+{
+    int8_t e[TRK_DIM];
+    face_emb(person, seed, e, noise);
+    static const int gal[3] = { P_DANA, P_OTHER, P_KYLE };
+    static const char *keys[3] = { "dana", "other", "kyle" }, *names[3] = { "Dana", "Other", "Kyle" };
+    int best = 0;
+    float bs = -1;
+    for (int g = 0; g < 3; g++) { float sc = gscore(e, gal[g]); if (sc > bs) { bs = sc; best = g; } }
+    /* real embeddings are not this clean: scale scores so an enrolled face scores ~0.55-0.65 */
+    bs *= 0.65f;
+    float own = -1;
+    if (tr->t[ti].state == TS_KNOWN)
+        for (int g = 0; g < 3; g++) if (!strcmp(tr->t[ti].key, keys[g])) own = gscore(e, gal[g]) * 0.65f;
+    return tracker_observe(tr, ti, e, TRK_DIM, keys[best], names[best], keys[best], 0, bs, own, 0.6f, 120, t);
+}
+
 static void test_tracker(void)
 {
-    trk_params p = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000 };
+    trk_params p = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000, 0.30f };
     tracker tr;
     tracker_init(&tr, &p);
+    unsigned seed = 1;
     float b[2][4] = { { 100, 100, 200, 220 }, { 600, 100, 700, 220 } };
     int ti[2];
     long long t = 1000;
-    /* T1 a known face: locks after two confident frames, one track */
+    /* T1 a known face locks after two confident frames, one track */
     tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
-    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.60f, -1, 0.5f, 100, t);
+    check(&tr, ti[0], P_DANA, &seed, 0.25f, t);
     CHECK(tr.t[ti[0]].state == TS_PENDING, "locked after one frame");
     t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
-    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.58f, -1, 0.5f, 100, t);
+    check(&tr, ti[0], P_DANA, &seed, 0.25f, t);
     CHECK(tr.t[ti[0]].state == TS_KNOWN && tr.t[ti[0]].needs_emit && !strcmp(tr.t[ti[0]].name, "Dana"), "not locked after two");
     int first = ti[0];
     char eid[37]; memcpy(eid, tr.t[first].event_id, 37);
     tr.t[first].needs_emit = 0; tr.t[first].revision = 1;
-    /* T2 head turns: weak scores keep the name, no new event */
+    /* T2 head turns: weak gallery scores, but still the same face -> name kept, no new event */
     for (int k = 0; k < 5; k++) {
         t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
-        int split = tracker_observe(&tr, ti[0], "p-9", "Other", "p-9", 0, 0.30f, 0.20f, 0.3f, 100, t);
-        CHECK(!split && ti[0] == first && tr.t[first].state == TS_KNOWN && !tr.t[first].needs_emit, "weak frame changed the track");
+        int8_t e[TRK_DIM];
+        face_emb(P_DANA, &seed, e, 0.25f);
+        int split = tracker_observe(&tr, ti[0], e, TRK_DIM, "other", "Other", "other", 0, 0.30f, 0.20f, 0.3f, 100, t);
+        CHECK(!split && ti[0] == first && tr.t[first].state == TS_KNOWN && !tr.t[first].needs_emit, "head turn changed the track");
     }
-    /* T3 confidently someone else three times in a row -> split */
+    /* T3 a different face in the track -> split after two checks, whatever the gallery says */
     int split = 0;
-    for (int k = 0; k < 3; k++) {
+    for (int k = 0; k < 2 && !split; k++) {
         t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
-        split = tracker_observe(&tr, ti[0], "p-9", "Other", "p-9", 0, 0.70f, 0.20f, 0.5f, 100, t);
+        split = check(&tr, ti[0], P_WOMAN, &seed, 0.25f, t);
+        CHECK(k == 1 || !split, "split on a single odd frame");
     }
-    CHECK(split == 1, "no split after three confident matches to someone else");
-    trk_track closed;
-    tracker_close(&tr, first, t, &closed);
-    CHECK(!strcmp(closed.event_id, eid) && closed.ended_ms == t, "split did not close the original event");
-    /* T4 stranger after three unconfident frames, recognised later in the same visit */
-    t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
-    for (int k = 0; k < 3; k++) {
-        tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.20f, -1, 0.4f, 100, t);
-        t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti);
-    }
-    CHECK(tr.t[ti[0]].state == TS_STRANGER, "not a stranger after three frames");
-    memcpy(eid, tr.t[ti[0]].event_id, 37);
-    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.60f, -1, 0.5f, 100, t);
-    tracker_observe(&tr, ti[0], "p-1", "Dana", "p-1", 0, 0.60f, -1, 0.5f, 100, t);
-    CHECK(tr.t[ti[0]].state == TS_KNOWN && !strcmp(tr.t[ti[0]].event_id, eid), "stranger not upgraded within the same event");
+    CHECK(split == 1, "a different face did not split the track");
+    tracker_detach(&tr, first, t);
+    /* T4 Dana comes back within the close window -> same event continues (no duplicate) */
+    t += 300;
+    for (int k = 0; k < 3; k++) { t += 100; tracker_associate(&tr, (const float (*)[4])b, 1, t, ti); check(&tr, ti[0], P_DANA, &seed, 0.25f, t); }
+    CHECK(tr.t[ti[0]].state == TS_KNOWN && !strcmp(tr.t[ti[0]].event_id, eid) && tr.t[ti[0]].revision == 1,
+          "returning person did not continue their event");
     /* T5 leaves: closed after close_ms, ended at last sighting */
     long long last = t;
-    trk_track out[4];
-    CHECK(tracker_expire(&tr, last + 2900, out, 4) == 0, "closed too early");
-    CHECK(tracker_expire(&tr, last + 3100, out, 4) == 1 && out[0].ended_ms == last, "not closed after the absence");
-    /* T6 two people side by side -> two tracks that keep their identity */
+    trk_track out[TRK_MAX];
+    int n0 = tracker_expire(&tr, last + 2900, out, TRK_MAX);
+    CHECK(n0 == 0, "closed too early");
+    int nc = tracker_expire(&tr, last + 3100, out, TRK_MAX);
+    int dana_closed = 0;
+    for (int k = 0; k < nc; k++) dana_closed += !strcmp(out[k].event_id, eid) && out[k].ended_ms == last;
+    CHECK(dana_closed == 1, "Dana's event not closed exactly once after the absence (%d)", nc);
+    /* T6 two people side by side keep their tracks */
     t += 5000; tracker_associate(&tr, (const float (*)[4])b, 2, t, ti);
     int a0 = ti[0], a1 = ti[1];
     for (int k = 0; k < 5; k++) {
@@ -388,10 +437,73 @@ static void test_tracker(void)
         t += 100; tracker_associate(&tr, (const float (*)[4])b, 2, t, ti);
         CHECK(ti[0] == a0 && ti[1] == a1, "people swapped tracks");
     }
-    /* T7 low frame rate: the face moved past its old box but is the same size and close -> same track */
+    /* T7 low frame rate: moved past its old box, same size, close by -> same track */
     float j[1][4] = { { b[0][0] + 85, b[0][1] + 10, b[0][2] + 85, b[0][3] + 10 } };
     t += 600; tracker_associate(&tr, (const float (*)[4])j, 1, t, ti);
     CHECK(ti[0] == a0, "jump at low frame rate started a new track");
+}
+
+/* John's video: Kyle (enrolled) right, the woman (not enrolled) left; the photos are swapped.
+ * mode 0: they vanish for 0.4 s and reappear swapped.  mode 1: they slide past each other. */
+static void test_photo_swap(int mode)
+{
+    trk_params p = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000, 0.30f };
+    tracker tr;
+    tracker_init(&tr, &p);
+    unsigned seed = 99;
+    long long t = 0;
+    float L[4] = { 100, 100, 200, 220 }, R[4] = { 400, 100, 500, 220 };
+    int who_at[2] = { P_WOMAN, P_KYLE };                   /* person in box 0 (left-moving) and box 1 */
+    char kyle_event[37] = "", woman_event[37] = "";
+    int events_opened = 0, wrong_name_frames = 0;
+    for (int f = 0; f < 80; f++) {
+        t += 100;
+        float bx[2][4];
+        int n = 2;
+        if (mode == 0) {
+            if (f >= 20 && f < 24) n = 0;                 /* hands cover the photos */
+            if (f >= 24) { who_at[0] = P_KYLE; who_at[1] = P_WOMAN; }
+            memcpy(bx[0], L, sizeof L); memcpy(bx[1], R, sizeof R);
+        } else {
+            float k = f < 20 ? 0 : f > 40 ? 1 : (f - 20) / 20.0f;   /* slide past each other */
+            for (int c = 0; c < 4; c++) { bx[0][c] = L[c] + (R[c] - L[c]) * k; bx[1][c] = R[c] + (L[c] - R[c]) * k; }
+            bx[0][1] += 30 * k * (1 - k) * 4; bx[0][3] += 30 * k * (1 - k) * 4;   /* one passes slightly lower */
+        }
+        int ti[2];
+        tracker_associate(&tr, (const float (*)[4])bx, n, t, ti);
+        int splits[2], ns = 0;
+        for (int d = 0; d < n; d++) {
+            if (!tracker_wants_embed(&tr, ti[d], t)) continue;
+            if (check(&tr, ti[d], who_at[d], &seed, 0.25f, t)) splits[ns++] = ti[d];
+        }
+        for (int k = 0; k < ns; k++) tracker_detach(&tr, splits[k], t);
+        for (int d = 0; d < n; d++) {
+            trk_track *tk = &tr.t[ti[d]];
+            if (!tk->active) continue;
+            if (tk->needs_emit) {
+                if (tk->revision == 0) events_opened++;
+                if (tk->state == TS_KNOWN && !kyle_event[0]) memcpy(kyle_event, tk->event_id, 37);
+                if (tk->state == TS_STRANGER && !woman_event[0]) memcpy(woman_event, tk->event_id, 37);
+                tk->revision++;
+                tk->needs_emit = 0;
+            }
+            /* the bug John saw: the woman's face shown with Kyle's name */
+            if (who_at[d] == P_WOMAN && tk->state == TS_KNOWN && !strcmp(tk->name, "Kyle") && f > 2) wrong_name_frames++;
+        }
+        trk_track out[TRK_MAX];
+        tracker_expire(&tr, t, out, TRK_MAX);
+    }
+    int kyle_ok = 0, woman_ok = 0;
+    for (int k = 0; k < TRK_MAX; k++) {
+        const trk_track *tk = &tr.t[k];
+        if (!tk->active || !tk->seen_now) continue;
+        int person = tk->x0 < 300 ? P_KYLE : P_WOMAN;   /* both cases: Kyle ends up on the left */
+        if (person == P_KYLE) kyle_ok = tk->state == TS_KNOWN && !strcmp(tk->name, "Kyle") && !strcmp(tk->event_id, kyle_event);
+        else woman_ok = tk->state == TS_STRANGER && !strcmp(tk->event_id, woman_event);
+    }
+    CHECK(wrong_name_frames <= 2, "mode %d: woman shown as Kyle for %d frames", mode, wrong_name_frames);
+    CHECK(kyle_ok && woman_ok, "mode %d: after the swap Kyle=%d (same event) woman=stranger %d (same event)", mode, kyle_ok, woman_ok);
+    CHECK(events_opened == 2, "mode %d: %d events opened (want 2: Kyle and the woman, continued through the swap)", mode, events_opened);
 }
 
 static long long la_ms(int y, int mo, int d, int h, int mi)
@@ -441,12 +553,12 @@ static void test_access(void)
 /* The behaviour John asked for: someone lingering and turning their head = one event, not one per match. */
 static void test_linger_one_event(void)
 {
-    trk_params p = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000 };
+    trk_params p = { 0.45f, 0.33f, 2, 3, 3, 3000, 1000, 0.30f };
     tracker tr;
     tracker_init(&tr, &p);
     long long t = 0;
     int opens = 0, closes = 0, splits = 0, ti;
-    unsigned seed = 7;
+    unsigned seed = 7, es = 5;
     for (int f = 0; f < 600; f++) {                       /* 60 s at 10 fps */
         seed = seed * 1103515245u + 12345u;
         float jx = (float)((seed >> 16) % 13) - 6, jy = (float)((seed >> 8) % 9) - 4;   /* box jitter */
@@ -457,7 +569,9 @@ static void test_linger_one_event(void)
             /* head turns: every third check is weak (0.28), the rest ~0.55 */
             float sc = (f % 30 < 10) ? 0.28f : 0.55f;
             float own = tr.t[ti].state == TS_KNOWN ? sc : -1;
-            splits += tracker_observe(&tr, ti, "p-1", "Dana", "p-1", 0, sc, own, 0.6f, 140, t);
+            int8_t e[TRK_DIM];
+            face_emb(P_DANA, &es, e, f % 30 < 10 ? 0.45f : 0.25f);    /* turned head: noisier embedding */
+            splits += tracker_observe(&tr, ti, e, TRK_DIM, "p-1", "Dana", "p-1", 0, sc, own, 0.6f, 140, t);
         }
         if (tr.t[ti].needs_emit) { opens += tr.t[ti].revision == 0; tr.t[ti].revision++; tr.t[ti].needs_emit = 0; }
     }
@@ -485,6 +599,8 @@ int main(void)
     test_tracker();
     test_access();
     test_linger_one_event();
+    test_photo_swap(0);
+    test_photo_swap(1);
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     printf("all tests passed\n");
     return 0;

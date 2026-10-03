@@ -133,7 +133,9 @@ offset kept from Pharos `serverTime`. Watchlist classes: green = allowed, amber 
 red = Threat.
 
 **Events (§7, 0.7.0):** faces are tracked; a name locks after two confident frames and is kept
-while the same face stays in view (head turns don't drop it). One event per visit: opened when the
+while the same face stays in view (head turns don't drop it). Each track keeps an appearance
+print of its face: a different face landing in a track (people crossing, photos swapped) splits it
+within two checks, and an event continues if the same person is seen again within the close window. One event per visit: opened when the
 person is identified (or declared a stranger), updated if a clearly better face is seen, closed
 (`endedAt`) after `events.trackCloseSec` without the face. Face crop (≥240 px or native) and scene
 (1280×720) JPEGs follow each event. Watchlist role: Threat/Concern always, strangers as plain
