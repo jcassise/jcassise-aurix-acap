@@ -275,10 +275,17 @@ class Sim:
                             sim.image_early += 1
                     if not known:
                         return self.err(404, "event_unknown", "event first")
-                    if len(raw) > 2 * 1024 * 1024:
+                    if len(raw) > 5 * 1024 * 1024:            # Pharos limit (1.8.1)
                         return self.err(413, "image_too_large", "2 MiB")
-                    if raw[:2] != b"\xff\xd8":
-                        sim.violations.append(f"image {kind} is not a JPEG")
+                    if raw[:3] != b"\xff\xd8\xff":           # exactly what Pharos checks (not_a_jpeg)
+                        sim.violations.append(f"image {kind} is not a JPEG (starts {raw[:3].hex()})")
+                        return self.err(400, "not_a_jpeg", "first bytes")
+                    try:
+                        import io
+                        from PIL import Image
+                        Image.open(io.BytesIO(raw)).load()
+                    except Exception as e:
+                        sim.violations.append(f"image {kind} does not decode: {e}")
                     with sim.lock:
                         sim.images[(eid, kind)] = raw
                     self.send_response(204); self.send_header("Content-Length", "0"); self.end_headers()

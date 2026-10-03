@@ -448,7 +448,17 @@ static upload_result upload_events(pharos *p, long long deadline)
             if (r.err != PH_OK || r.status == 429 || r.status >= 500) res = UP_STOP;
             else if (r.status == 401) res = UP_AUTH;
             else if (r.status == 410) res = UP_REVOKED;
-            else if (r.status == 204 || r.status == 200 || r.status == 413 || r.status == 400) *imgs[k].flag = 1;
+            else if (r.status == 204 || r.status == 200) *imgs[k].flag = 1;
+            else if (r.status == 413 || r.status == 400) {          /* refused for good: log why, drop it */
+                json_t *eb = r.body ? json_loads(r.body, 0, NULL) : NULL;
+                const char *code = json_string_value(json_object_get(json_object_get(eb, "error"), "code"));
+                syslog(LOG_WARNING, "pharos: %s image of event %s refused (HTTP %ld %s, %zu bytes, starts %02x%02x%02x)",
+                       imgs[k].kind, it.event_id, r.status, code ? code : "no error code", imgs[k].len,
+                       imgs[k].len > 0 ? imgs[k].data[0] : 0, imgs[k].len > 1 ? imgs[k].data[1] : 0,
+                       imgs[k].len > 2 ? imgs[k].data[2] : 0);
+                json_decref(eb);
+                *imgs[k].flag = 1;
+            }
             /* 404 event_unknown: the event is still queued behind; retry later */
             ph_response_free(&r);
         }
