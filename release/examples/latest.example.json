@@ -1,0 +1,36 @@
+{
+  "app": "aurix",
+  "schema": 1,
+  "version": "0.8.1",
+  "tag": "v0.8.1",
+  "released": "2026-10-03T22:08:54Z",
+  "signed": false,
+  "packages": [
+    {
+      "arch": "armv7hf",
+      "file": "aurix-0.8.1-armv7hf.eap",
+      "url": "https://github.com/jcassise/jcassise-aurix-acap/releases/download/v0.8.1/aurix-0.8.1-armv7hf.eap",
+      "sha256": "<sha256 of the package>",
+      "size": 4194304,
+      "minAxisOs": "11.11",
+      "maxAxisOs": "12.99",
+      "chips": [
+        "ARTPEC-7"
+      ]
+    },
+    {
+      "arch": "aarch64",
+      "file": "aurix-0.8.1-aarch64.eap",
+      "url": "https://github.com/jcassise/jcassise-aurix-acap/releases/download/v0.8.1/aurix-0.8.1-aarch64.eap",
+      "sha256": "<sha256 of the package>",
+      "size": 4194304,
+      "minAxisOs": "12.11",
+      "maxAxisOs": "12.99",
+      "chips": [
+        "ARTPEC-8"
+      ]
+    }
+  ],
+  "compat": "https://github.com/jcassise/jcassise-aurix-acap/releases/download/v0.8.1/aurix-compat.json",
+  "notes": "Unsigned development build: installs on AXIS OS 11 and 12, not on AXIS OS 13."
+}

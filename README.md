@@ -203,3 +203,20 @@ overrides the local value and is shown as "Set by Pharos". Head pose is estimate
 facial landmarks (good to about 10°) and reported in events as `face.yawDeg` / `face.pitchDeg`.
 Occlusion is not measured separately: partly covered faces get lower detection scores, so
 `recognition.minDetectScore` is the control for it.
+
+## Releases (for Pharos auto-discovery)
+
+Push a version tag that matches the manifests' version and CI publishes a GitHub release:
+
+```sh
+git tag v0.8.1 && git push origin v0.8.1
+```
+
+The release holds `aurix-<version>-armv7hf.eap`, `aurix-<version>-aarch64.eap`, `latest.json`
+(version, per-architecture URL, sha256, size, AXIS OS range), `aurix-compat.json` (from
+`release/compat.json`: chips, AXIS OS range, resources, tested models) and `SHA256SUMS`.
+Pharos polls the fixed address of the newest release:
+`https://github.com/<owner>/<repo>/releases/latest/download/latest.json`.
+CI refuses to publish if the tag and the manifests disagree or a package is missing; every push
+also builds the metadata as a dry run (`release-preview` artifact). Edit `release/compat.json`
+when a model is tested.

@@ -1,0 +1,49 @@
+{
+  "app": "aurix",
+  "schema": 1,
+  "description": "What AURIX runs on. Pharos marks a discovered camera capable when its Architecture matches a package and its AXIS OS version is within minAxisOs..maxAxisOs; a chip not listed means untested (unknown), not incompatible.",
+  "packages": [
+    {
+      "arch": "armv7hf",
+      "chips": [
+        "ARTPEC-7"
+      ],
+      "accelerator": "none (CPU inference)",
+      "minAxisOs": "11.11",
+      "maxAxisOs": "12.99",
+      "minFreeRamMb": 150,
+      "minFreeStorageMb": 60,
+      "expectedFps": 1.7,
+      "testedModels": [
+        {
+          "model": "AXIS P3248-LV",
+          "axisOs": "11.11.220"
+        }
+      ]
+    },
+    {
+      "arch": "aarch64",
+      "chips": [
+        "ARTPEC-8"
+      ],
+      "accelerator": "DLPU",
+      "minAxisOs": "12.11",
+      "maxAxisOs": "12.99",
+      "minFreeRamMb": 150,
+      "minFreeStorageMb": 60,
+      "expectedFps": 10,
+      "testedModels": [
+        {
+          "model": "AXIS P3267-LV",
+          "axisOs": "12.11.118"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "AXIS OS 13 and later reject unsigned apps: maxAxisOs stays below 13 until AURIX is signed.",
+    "ARTPEC-9 is expected to run the aarch64 package but is untested.",
+    "minFreeRamMb and minFreeStorageMb are conservative estimates; storage grows with the number of people synced (about 1 KB each)."
+  ],
+  "version": "0.8.1"
+}

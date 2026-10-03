@@ -386,9 +386,11 @@ static void apply_config(pharos *p, long long rev, json_t *desired)
 {
     pc_config next;
     json_t *a, *r, *u;
+    /* copy before releasing: `desired` may be p->desired itself (re-merge after a local change) */
+    json_t *copy = desired ? json_deep_copy(desired) : json_object();
     json_decref(p->desired);
-    p->desired = desired ? json_deep_copy(desired) : json_object();
-    json_t *m = merged_config(desired);
+    p->desired = copy;
+    json_t *m = merged_config(p->desired);
     pc_apply(m, &p->cfg, p->s.default_threshold, &next, &a, &r, &u);
     json_decref(m);
     int changed = memcmp(&next, &p->cfg, sizeof next) != 0 || rev != p->config_rev || g_local_dirty;
@@ -405,7 +407,7 @@ static void apply_config(pharos *p, long long rev, json_t *desired)
         }
         p->config_rev = rev;
         if (p->h.apply_config) p->h.apply_config(&p->cfg, p->config_rev, p->h.user);
-        persist(p, desired);
+        persist(p, p->desired);
     }
 }
 
